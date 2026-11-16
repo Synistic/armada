@@ -27,6 +27,12 @@ pub struct ShipDef {
     pub max_speed: Fx,
     /// Meters per tick squared.
     pub accel: Fx,
+    /// Cosine and sine of the max turn per tick.
+    pub turn_cos: Fx,
+    pub turn_sin: Fx,
+    /// Ship frame direction the ship wants its target in when it holds
+    /// position: where most firepower bears. (1, 0) is a starboard broadside.
+    pub preferred_bearing: Vec2,
     pub radius: Fx,
     pub sensor_range: Fx,
     /// Distance the ship holds to its target.
@@ -57,4 +63,8 @@ pub struct WeaponDef {
     pub range: Fx,
     pub cooldown_ticks: u16,
     pub accuracy_pct: u8,
+    /// Ship frame unit vector the weapon points along.
+    pub facing: Vec2,
+    /// Cosine of half the firing arc. -1 means all round.
+    pub arc_cos: Fx,
 }

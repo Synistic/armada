@@ -124,13 +124,11 @@ fn setup(
 
     for i in 0..w.ships.len() {
         let team = usize::from(w.ships.team[i]) % team_materials.len();
-        let facing = if team == 0 { 0.0 } else { std::f32::consts::PI };
         commands.spawn((
             ShipView(i),
             Mesh3d(class_meshes[usize::from(w.ships.def[i])].clone()),
             MeshMaterial3d(team_materials[team].clone()),
-            Transform::from_translation(to_render(w.ships.pos[i]))
-                .with_rotation(Quat::from_rotation_y(facing)),
+            Transform::from_translation(to_render(w.ships.pos[i])),
         ));
     }
 
@@ -271,11 +269,8 @@ fn sync_ships(
             continue;
         }
         tf.translation = to_render(sim.prev_pos[i]).lerp(to_render(s.pos[i]), alpha);
-        let v = s.vel[i];
-        let (vx, vz) = (v.x.to_f32(), v.y.to_f32());
-        if vx * vx + vz * vz > 1e-4 {
-            tf.rotation = Quat::from_rotation_y(vx.atan2(vz));
-        }
+        let h = s.heading[i];
+        tf.rotation = Quat::from_rotation_y(h.x.to_f32().atan2(h.y.to_f32()));
     }
 }
 
@@ -290,8 +285,11 @@ fn draw_shots(sim: Res<Sim>, mut gizmos: Gizmos) {
         else {
             continue;
         };
-        let owner = w.hardpoints.owner[hardpoint as usize] as usize;
-        let from = to_render(w.ships.pos[owner]);
+        let hp = hardpoint as usize;
+        let owner = w.hardpoints.owner[hp] as usize;
+        let def = &w.defs.ships[usize::from(w.ships.def[owner])];
+        let offset = def.hardpoints[usize::from(w.hardpoints.slot[hp])].offset;
+        let from = to_render(w.ships.pos[owner] + offset.from_local(w.ships.heading[owner]));
         let mut to = to_render(w.ships.pos[target as usize]);
         if !hit {
             // Misses fly past the target.

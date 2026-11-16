@@ -16,9 +16,11 @@ use armada_sim::{
 use serde::{Deserialize, Serialize};
 
 const HZ: f64 = TICK_HZ as f64;
-/// Ships hold this fraction of their shortest weapon range to their target.
+/// By default ships hold this fraction of their longest weapon range to their target.
 const ENGAGE_FRACTION: f64 = 0.85;
-pub const REPLAY_FORMAT: u32 = 1;
+pub const REPLAY_FORMAT: u32 = 2;
+/// Candidate bearings when searching for the best broadside.
+const BEARING_STEPS: u32 = 72;
 
 #[derive(Deserialize)]
 struct ShipFile {
@@ -33,8 +35,14 @@ struct ShipSpec {
     shield_regen: i32,
     speed: f64,
     accel: f64,
+    /// Degrees per second.
+    turn_rate: f64,
     radius: f64,
     sensor_range: f64,
+    /// Distance held to the target. Defaults to the longest weapon range
+    /// times ENGAGE_FRACTION.
+    #[serde(default)]
+    engage_range: Option<f64>,
     hardpoints: Vec<HardpointSpec>,
 }
 
@@ -53,9 +61,19 @@ enum HardpointKindSpec {
         range: f64,
         cooldown: f64,
         accuracy: u8,
+        /// Degrees clockwise from the bow: 90 is starboard, 270 is port.
+        #[serde(default)]
+        facing: f64,
+        /// Full firing arc in degrees.
+        #[serde(default = "full_arc")]
+        arc: f64,
     },
     ShieldGenerator,
     Engine,
+}
+
+fn full_arc() -> f64 {
+    360.0
 }
 
 #[derive(Deserialize)]
@@ -84,6 +102,9 @@ struct GroupSpec {
     spacing: f64,
     row_spacing: f64,
     origin: (f64, f64),
+    /// Degrees clockwise from +y.
+    #[serde(default)]
+    facing: f64,
 }
 
 /// Raw file contents. A replay embeds these, so it stays valid when the
@@ -153,8 +174,77 @@ pub fn read_sources(scenario_path: &Path) -> Result<Sources, LoadError> {
     })
 }
 
+/// Sine from +, * and round only. `f64::sin` calls the platform libm, which
+/// is not guaranteed to give the same bits everywhere; this is.
+fn det_sin(x: f64) -> f64 {
+    use std::f64::consts::{FRAC_PI_2, PI, TAU};
+    let mut x = x - TAU * (x / TAU).round();
+    if x > FRAC_PI_2 {
+        x = PI - x;
+    } else if x < -FRAC_PI_2 {
+        x = -PI - x;
+    }
+    // Taylor to x^13, error below 1e-9 on [-pi/2, pi/2].
+    let x2 = x * x;
+    let mut term = x;
+    let mut sum = x;
+    for n in [2.0, 4.0, 6.0, 8.0, 10.0, 12.0] {
+        term = -term * x2 / (n * (n + 1.0));
+        sum += term;
+    }
+    sum
+}
+
+fn det_cos(x: f64) -> f64 {
+    det_sin(x + std::f64::consts::FRAC_PI_2)
+}
+
+/// Unit vector for degrees clockwise from +y (or from the bow).
+fn dir_deg(deg: f64) -> (f64, f64) {
+    let r = deg.to_radians();
+    (det_sin(r), det_cos(r))
+}
+
+fn fx_vec((x, y): (f64, f64)) -> Vec2 {
+    Vec2::new(Fx::from_f64(x), Fx::from_f64(y))
+}
+
+struct ArcSpec {
+    facing: (f64, f64),
+    arc_cos: f64,
+    dps: f64,
+}
+
+/// Ship frame bearing where the most damage per second bears. Among equal
+/// bearings the one where the guns point most centrally wins, otherwise a
+/// bearing on the very edge of an arc ties with the middle of it.
+fn best_bearing(arcs: &[ArcSpec]) -> (f64, f64) {
+    const EPS: f64 = 1e-6;
+    let mut best = (0.0, 1.0);
+    let mut best_score = (-1.0, -1.0);
+    for k in 0..BEARING_STEPS {
+        let b = dir_deg(f64::from(k) * 360.0 / f64::from(BEARING_STEPS));
+        let (mut dps, mut centered) = (0.0, 0.0);
+        for a in arcs {
+            let dot = b.0 * a.facing.0 + b.1 * a.facing.1;
+            if dot >= a.arc_cos - EPS {
+                dps += a.dps;
+                centered += a.dps * dot;
+            }
+        }
+        let better = dps > best_score.0 + EPS
+            || (dps > best_score.0 - EPS && centered > best_score.1 + EPS);
+        if better {
+            best_score = (dps, centered);
+            best = b;
+        }
+    }
+    best
+}
+
 fn compile_ship(spec: ShipSpec) -> ShipDef {
-    let mut min_range: Option<f64> = None;
+    let mut max_range: Option<f64> = None;
+    let mut arcs = Vec::new();
     let hardpoints = spec
         .hardpoints
         .into_iter()
@@ -165,13 +255,29 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
                     range,
                     cooldown,
                     accuracy,
+                    facing,
+                    arc,
                 } => {
-                    min_range = Some(min_range.map_or(range, |m| m.min(range)));
+                    max_range = Some(max_range.map_or(range, |m| m.max(range)));
+                    let facing = dir_deg(facing);
+                    let arc_cos = if arc >= 360.0 {
+                        -1.0
+                    } else {
+                        det_cos((arc / 2.0).to_radians())
+                    };
+                    let cooldown_ticks = (cooldown * HZ).round().max(1.0) as u16;
+                    arcs.push(ArcSpec {
+                        facing,
+                        arc_cos,
+                        dps: f64::from(damage) / f64::from(cooldown_ticks),
+                    });
                     HardpointKind::Weapon(WeaponDef {
                         damage,
                         range: Fx::from_f64(range),
-                        cooldown_ticks: (cooldown * HZ).round().max(1.0) as u16,
+                        cooldown_ticks,
                         accuracy_pct: accuracy.min(100),
+                        facing: fx_vec(facing),
+                        arc_cos: Fx::from_f64(arc_cos),
                     })
                 }
                 HardpointKindSpec::ShieldGenerator => HardpointKind::ShieldGenerator,
@@ -185,6 +291,7 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
             }
         })
         .collect();
+    let turn = (spec.turn_rate / HZ).to_radians();
 
     ShipDef {
         name: spec.name,
@@ -193,9 +300,14 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
         shield_regen: spec.shield_regen,
         max_speed: Fx::from_f64(spec.speed / HZ),
         accel: Fx::from_f64(spec.accel / (HZ * HZ)),
+        turn_cos: Fx::from_f64(det_cos(turn)),
+        turn_sin: Fx::from_f64(det_sin(turn)),
+        preferred_bearing: fx_vec(best_bearing(&arcs)),
         radius: Fx::from_f64(spec.radius),
         sensor_range: Fx::from_f64(spec.sensor_range),
-        engage_range: Fx::from_f64(min_range.unwrap_or(spec.sensor_range * 0.5) * ENGAGE_FRACTION),
+        engage_range: Fx::from_f64(spec.engage_range.unwrap_or_else(|| {
+            max_range.unwrap_or(spec.sensor_range * 0.5) * ENGAGE_FRACTION
+        })),
         hardpoints,
     }
 }
@@ -235,11 +347,12 @@ pub fn build(sources: &Sources) -> Result<(World, ScenarioSpec), LoadError> {
             let row_spacing = Fx::from_f64(g.row_spacing);
             // Center the block on its origin along x.
             let left = spacing * i64::from(columns - 1) / 2;
+            let heading = fx_vec(dir_deg(g.facing));
             for k in 0..g.count {
                 let col = i64::from(k % columns);
                 let row = i64::from(k / columns);
                 let pos = origin + Vec2::new(spacing * col - left, row_spacing * row);
-                world.spawn_ship(def, fleet.team, pos);
+                world.spawn_ship(def, fleet.team, pos, heading);
             }
         }
     }
@@ -262,4 +375,39 @@ pub fn load_replay(path: &Path) -> Result<Replay, LoadError> {
 /// Path to the bundled content, independent of the working directory.
 pub fn content_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{best_bearing, det_cos, det_sin, ArcSpec};
+
+    #[test]
+    fn trig_matches_libm_closely() {
+        for i in -720..=720 {
+            let x = f64::from(i) * 0.01;
+            assert!((det_sin(x) - x.sin()).abs() < 1e-9, "sin {x}");
+            assert!((det_cos(x) - x.cos()).abs() < 1e-9, "cos {x}");
+        }
+    }
+
+    #[test]
+    fn broadside_wins_over_single_bow_gun() {
+        let side = |facing| ArcSpec {
+            facing,
+            arc_cos: 0.5,
+            dps: 2.0,
+        };
+        // Narrow bow arc, so it never overlaps the starboard arcs.
+        let arcs = [
+            ArcSpec {
+                facing: (0.0, 1.0),
+                arc_cos: 0.95,
+                dps: 3.0,
+            },
+            side((1.0, 0.0)),
+            side((1.0, 0.0)),
+        ];
+        let (x, y) = best_bearing(&arcs);
+        assert!(x >= 0.49 && y < 0.9, "got ({x}, {y})");
+    }
 }

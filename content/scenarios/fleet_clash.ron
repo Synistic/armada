@@ -17,10 +17,10 @@
         (
             team: 1,
             groups: [
-                (ship: "corvette", count: 650, columns: 40, spacing: 60.0, row_spacing: 60.0, origin: (0.0, 4000.0)),
-                (ship: "frigate", count: 280, columns: 28, spacing: 120.0, row_spacing: 120.0, origin: (0.0, 5100.0)),
-                (ship: "cruiser", count: 55, columns: 11, spacing: 250.0, row_spacing: 250.0, origin: (0.0, 6500.0)),
-                (ship: "dreadnought", count: 15, columns: 5, spacing: 500.0, row_spacing: 500.0, origin: (0.0, 7900.0)),
+                (ship: "corvette", count: 650, columns: 40, spacing: 60.0, row_spacing: 60.0, origin: (0.0, 4000.0), facing: 180.0),
+                (ship: "frigate", count: 280, columns: 28, spacing: 120.0, row_spacing: 120.0, origin: (0.0, 5100.0), facing: 180.0),
+                (ship: "cruiser", count: 55, columns: 11, spacing: 250.0, row_spacing: 250.0, origin: (0.0, 6500.0), facing: 180.0),
+                (ship: "dreadnought", count: 15, columns: 5, spacing: 500.0, row_spacing: 500.0, origin: (0.0, 7900.0), facing: 180.0),
             ],
         ),
     ],

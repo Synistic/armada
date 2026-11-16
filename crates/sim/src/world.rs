@@ -35,6 +35,11 @@ pub struct Ships {
     pub team: Vec<u8>,
     pub alive: Vec<bool>,
     pub pos: Vec<Vec2>,
+    /// Unit vector. Ships only thrust along it.
+    pub heading: Vec<Vec2>,
+    /// Scalar speed along the heading, meters per tick.
+    pub speed: Vec<Fx>,
+    /// Actual displacement of the last tick, for presentation.
     pub vel: Vec<Vec2>,
     pub hull: Vec<i32>,
     pub shield: Vec<i32>,
@@ -62,6 +67,8 @@ pub struct Hardpoints {
     pub slot: Vec<u16>,
     pub health: Vec<i32>,
     pub cooldown: Vec<u16>,
+    /// Target of opportunity, used when the ship's own target is out of arc.
+    pub target: Vec<u32>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -98,7 +105,8 @@ impl World {
         }
     }
 
-    pub fn spawn_ship(&mut self, def: u16, team: u8, pos: Vec2) -> u32 {
+    /// `heading` must be a unit vector.
+    pub fn spawn_ship(&mut self, def: u16, team: u8, pos: Vec2, heading: Vec2) -> u32 {
         assert!(usize::from(team) < MAX_TEAMS, "team {team} out of range");
         let defs = Arc::clone(&self.defs);
         let d = &defs.ships[usize::from(def)];
@@ -109,6 +117,8 @@ impl World {
         s.team.push(team);
         s.alive.push(true);
         s.pos.push(pos.clamp_box(self.arena_half));
+        s.heading.push(heading);
+        s.speed.push(Fx::ZERO);
         s.vel.push(Vec2::ZERO);
         s.hull.push(d.hull);
         s.shield.push(d.shield);
@@ -128,6 +138,7 @@ impl World {
             self.hardpoints.slot.push(slot as u16);
             self.hardpoints.health.push(hp.health);
             self.hardpoints.cooldown.push(cooldown);
+            self.hardpoints.target.push(NONE);
         }
         id
     }

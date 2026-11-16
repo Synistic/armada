@@ -93,3 +93,26 @@ fn replay_roundtrip() {
     let checkpoints = run(&mut again, &loaded.commands, loaded.ticks, 15);
     assert_eq!(checkpoints, loaded.checkpoints);
 }
+
+#[test]
+fn cruisers_hold_broadside() {
+    let (mut w, _) = build(&sources()).unwrap();
+    let cruiser = w.defs.ship_index("cruiser").unwrap();
+    run(&mut w, &CommandLog::default(), 2400, 15);
+
+    let s = &w.ships;
+    let (mut broadside, mut holding) = (0, 0);
+    for i in 0..s.len() {
+        let t = s.target[i];
+        if s.def[i] != cruiser || !s.alive[i] || t == armada_sim::NONE || s.speed[i] != Fx::ZERO {
+            continue;
+        }
+        let local = (s.pos[t as usize] - s.pos[i]).to_local(s.heading[i]);
+        holding += 1;
+        if local.x.0.abs() > local.y.0.abs() {
+            broadside += 1;
+        }
+    }
+    assert!(holding > 0, "no cruiser holding position at tick 2400");
+    assert!(broadside * 4 >= holding * 3, "{broadside} of {holding} holding cruisers broadside");
+}

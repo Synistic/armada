@@ -45,6 +45,17 @@ that only show up after 20 minutes on someone else's machine.
 commands -> spatial grid -> retarget (staggered, every 8 ticks) -> movement (velocity pass,
 then integrate) -> weapons -> shield regen -> deaths.
 
+## Movement and arcs
+
+Ships have a heading and a turn rate and only thrust forward: a ship facing the wrong way slows
+down and turns first. In range of its target a ship stops at its engage range (longest weapon
+range times 0.85 unless the ship file sets `engage_range`) and turns to its preferred bearing,
+the one where the most damage per second bears. For broadside designs that is the beam.
+
+Every weapon has a facing and an arc. It fires at the ship's target if that is in arc and range,
+otherwise at its own target of opportunity. Trig at load time uses a polynomial instead of libm,
+because libm results can differ between platforms.
+
 ## Damage model
 
 Shield absorbs first. The rest hits a random intact hardpoint at full strength and the hull at

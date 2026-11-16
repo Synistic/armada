@@ -3,10 +3,11 @@ use std::sync::Arc;
 use crate::{
     MAX_TEAMS, TICK_HZ,
     command::{Command, TimedCommand},
-    defs::{Defs, HardpointKind},
+    defs::{Defs, HardpointKind, WeaponDef},
     fixed::Fx,
+    grid::Grid,
     vec::Vec2,
-    world::{Event, FLAG_ENGINE_DOWN, FLAG_SHIELD_DOWN, NONE, Order, World},
+    world::{Event, FLAG_ENGINE_DOWN, FLAG_SHIELD_DOWN, NONE, Order, Ships, World},
 };
 
 /// Ships re-evaluate their target every N ticks, staggered by id, so the cost
@@ -157,19 +158,31 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
             def.max_speed
         };
 
-        let desired = match goal {
+        let heading = s.heading[i];
+        // Where to point and how fast to go once pointed there. In range of the
+        // target the ship stops and turns to bring its best arc to bear.
+        let (dir, want_speed) = match goal {
             Some((g, standoff)) => {
                 let to = g - pos;
                 let gap = to.len() - standoff;
-                if gap <= Fx::ZERO {
-                    Vec2::ZERO
+                if gap > Fx::ZERO {
+                    (to.normalize_or_zero(), max_speed.min(gap / ARRIVE_TICKS))
+                } else if standoff > Fx::ZERO {
+                    let bearing = def.preferred_bearing;
+                    (to.normalize_or_zero().heading_for_bearing(bearing), Fx::ZERO)
                 } else {
-                    to.normalize_or_zero()
-                        .scale(max_speed.min(gap / ARRIVE_TICKS))
+                    (heading, Fx::ZERO)
                 }
             }
-            None => Vec2::ZERO,
+            None => (heading, Fx::ZERO),
         };
+
+        let heading = heading.turn_towards(dir, def.turn_cos, def.turn_sin);
+        // Thrust only along the heading: a ship facing the wrong way slows
+        // down and turns first.
+        let align = heading.dot(dir).max(Fx::ZERO);
+        let target_speed = want_speed * align;
+        let speed = s.speed[i] + (target_speed - s.speed[i]).clamp(-def.accel, def.accel);
 
         let mut push = Vec2::ZERO;
         for &j in grid.cell_members(pos).iter().take(SEPARATION_CHECKS + 1) {
@@ -190,8 +203,10 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
             }
         }
 
-        let steer = (desired - s.vel[i]).clamp_len(def.accel) + push.scale(def.accel);
-        s.vel[i] = (s.vel[i] + steer).clamp_len(max_speed);
+        let nudge = push.clamp_len(Fx::ONE).scale(max_speed / 4);
+        s.heading[i] = heading;
+        s.speed[i] = speed;
+        s.vel[i] = heading.scale(speed) + nudge;
     }
 
     // Pass 2: integrate.
@@ -223,18 +238,39 @@ fn weapons(w: &mut World) {
             continue;
         }
 
-        let target = w.ships.target[owner];
+        // Ship target first, then the cached target of opportunity, then a
+        // fresh search. The search is staggered like ship retargeting.
+        let target = {
+            let s = &w.ships;
+            let heading = s.heading[owner];
+            let offset = sdef.hardpoints[usize::from(w.hardpoints.slot[h])].offset;
+            let mount = Mount {
+                pos: s.pos[owner] + offset.from_local(heading),
+                heading,
+                team: s.team[owner],
+                weapon,
+            };
+            let ship_target = s.target[owner];
+            let cached = w.hardpoints.target[h];
+            if mount.can_hit(s, &defs, ship_target) {
+                ship_target
+            } else if mount.can_hit(s, &defs, cached) {
+                cached
+            } else if cached != NONE
+                || w.tick.wrapping_add(h as u32).is_multiple_of(RETARGET_INTERVAL)
+            {
+                mount.find_target(s, &defs, &w.grid)
+            } else {
+                NONE
+            }
+        };
+        if target != w.ships.target[owner] {
+            w.hardpoints.target[h] = target;
+        }
         if target == NONE {
             continue;
         }
         let t = target as usize;
-        if !w.ships.alive[t] || w.ships.hull[t] <= 0 {
-            continue;
-        }
-        let reach = weapon.range + defs.ships[usize::from(w.ships.def[t])].radius;
-        if (w.ships.pos[t] - w.ships.pos[owner]).len_sq() > reach * reach {
-            continue;
-        }
 
         w.hardpoints.cooldown[h] = weapon.cooldown_ticks;
         let hit = w.rng.below(100) < u32::from(weapon.accuracy_pct);
@@ -246,6 +282,49 @@ fn weapons(w: &mut World) {
         if hit {
             apply_damage(w, &defs, t, weapon.damage);
         }
+    }
+}
+
+/// A weapon hardpoint in world space for one tick.
+struct Mount<'a> {
+    pos: Vec2,
+    heading: Vec2,
+    team: u8,
+    weapon: &'a WeaponDef,
+}
+
+impl Mount<'_> {
+    fn can_hit(&self, s: &Ships, defs: &Defs, t: u32) -> bool {
+        if t == NONE {
+            return false;
+        }
+        let t = t as usize;
+        if !s.alive[t] || s.hull[t] <= 0 || s.team[t] == self.team {
+            return false;
+        }
+        let to = s.pos[t] - self.pos;
+        let reach = self.weapon.range + defs.ships[usize::from(s.def[t])].radius;
+        if to.len_sq() > reach * reach {
+            return false;
+        }
+        self.weapon.arc_cos <= -Fx::ONE
+            || to.to_local(self.heading).normalize_or_zero().dot(self.weapon.facing)
+                >= self.weapon.arc_cos
+    }
+
+    fn find_target(&self, s: &Ships, defs: &Defs, grid: &Grid) -> u32 {
+        let mut best = NONE;
+        let mut best_d = Fx(i64::MAX);
+        grid.for_each_near(self.pos, self.weapon.range, |j| {
+            if self.can_hit(s, defs, j) {
+                let d = (s.pos[j as usize] - self.pos).len_sq();
+                if d < best_d {
+                    best_d = d;
+                    best = j;
+                }
+            }
+        });
+        best
     }
 }
 
@@ -305,6 +384,7 @@ fn deaths(w: &mut World) {
     for i in 0..s.len() {
         if s.alive[i] && s.hull[i] <= 0 {
             s.alive[i] = false;
+            s.speed[i] = Fx::ZERO;
             s.vel[i] = Vec2::ZERO;
             w.events.push(Event::ShipDestroyed(i as u32));
         }
