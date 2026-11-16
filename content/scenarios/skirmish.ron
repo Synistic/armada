@@ -1,0 +1,41 @@
+// One station per side and a small escort. Build up, take the five capture
+// points for income, destroy the enemy station to win.
+(
+    seed: 20261117,
+    arena_half: 9000.0,
+    ticks: 27000,
+    ship_files: ["../base/ships.ron"],
+    economy: (
+        start_credits: 1500,
+        income: 10,
+        point_income: 6,
+        pop_cap: 100,
+        capture_radius: 700.0,
+        capture_time: 10.0,
+    ),
+    points: [
+        (0.0, 0.0),
+        (-5000.0, -2500.0),
+        (5000.0, -2500.0),
+        (-5000.0, 2500.0),
+        (5000.0, 2500.0),
+    ],
+    fleets: [
+        (
+            team: 0,
+            groups: [
+                (ship: "station", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (0.0, -7000.0)),
+                (ship: "corvette", count: 8, columns: 4, spacing: 60.0, row_spacing: -60.0, origin: (0.0, -6300.0)),
+                (ship: "frigate", count: 3, columns: 3, spacing: 140.0, row_spacing: 0.0, origin: (0.0, -6500.0)),
+            ],
+        ),
+        (
+            team: 1,
+            groups: [
+                (ship: "station", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (0.0, 7000.0), facing: 180.0),
+                (ship: "corvette", count: 8, columns: 4, spacing: 60.0, row_spacing: 60.0, origin: (0.0, 6300.0), facing: 180.0),
+                (ship: "frigate", count: 3, columns: 3, spacing: 140.0, row_spacing: 0.0, origin: (0.0, 6500.0), facing: 180.0),
+            ],
+        ),
+    ],
+)

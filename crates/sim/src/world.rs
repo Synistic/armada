@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::{
     MAX_TEAMS,
     defs::{Defs, HardpointKind},
+    economy::{Points, Rules, Team},
     fixed::Fx,
     grid::Grid,
     rng::Rng,
@@ -24,9 +25,15 @@ pub enum Order {
     /// Stay put, turn the best arc toward the current target.
     Hold,
     /// Go to a formation slot at no more than `cap` meters per tick.
-    MoveTo { to: Vec2, cap: Fx },
+    MoveTo {
+        to: Vec2,
+        cap: Fx,
+    },
     /// Like `MoveTo`, but engage anything picked up on the way.
-    AttackMove { to: Vec2, cap: Fx },
+    AttackMove {
+        to: Vec2,
+        cap: Fx,
+    },
     Attack(u32),
 }
 
@@ -52,6 +59,12 @@ pub struct Ships {
     pub target: Vec<u32>,
     pub hp_first: Vec<u32>,
     pub hp_count: Vec<u16>,
+    /// Ships waiting to be built, front first. Empty for non-producers.
+    pub queue: Vec<Vec<u16>>,
+    /// Ticks spent on the front of the queue.
+    pub build_progress: Vec<u32>,
+    /// Where freshly built ships go.
+    pub rally: Vec<Vec2>,
 }
 
 impl Ships {
@@ -111,11 +124,21 @@ impl Projectiles {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
-    Shot { hardpoint: u32, target: u32, hit: bool },
-    Launch { hardpoint: u32 },
-    Impact { pos: Vec2, target: u32 },
+    Shot {
+        hardpoint: u32,
+        target: u32,
+        hit: bool,
+    },
+    Launch {
+        hardpoint: u32,
+    },
+    Impact {
+        pos: Vec2,
+        target: u32,
+    },
     HardpointDestroyed(u32),
     ShipDestroyed(u32),
+    ShipBuilt(u32),
 }
 
 #[derive(Clone)]
@@ -128,6 +151,10 @@ pub struct World {
     pub projectiles: Projectiles,
     pub rng: Rng,
     pub grid: Grid,
+    pub rules: Rules,
+    pub teams: [Team; MAX_TEAMS],
+    pub points: Points,
+    pub winner: Option<u8>,
     /// Output of the last tick for presentation. The sim never reads it.
     pub events: Vec<Event>,
 }
@@ -143,6 +170,10 @@ impl World {
             projectiles: Projectiles::default(),
             rng: Rng::new(seed),
             grid: Grid::new(arena_half, Fx::from_int(GRID_CELL_M)),
+            rules: Rules::default(),
+            teams: [Team::default(); MAX_TEAMS],
+            points: Points::default(),
+            winner: None,
             events: Vec::new(),
         }
     }
@@ -169,6 +200,15 @@ impl World {
         s.target.push(NONE);
         s.hp_first.push(self.hardpoints.owner.len() as u32);
         s.hp_count.push(d.hardpoints.len() as u16);
+        s.queue.push(Vec::new());
+        s.build_progress.push(0);
+        // Default rally: a few hulls in front of the ship.
+        s.rally
+            .push((pos + heading.scale(d.radius * 4)).clamp_box(self.arena_half));
+
+        let t = &mut self.teams[usize::from(team)];
+        t.present = true;
+        t.has_critical |= d.critical;
 
         for (slot, hp) in d.hardpoints.iter().enumerate() {
             // Random initial cooldown so a fleet does not fire in perfect volleys.

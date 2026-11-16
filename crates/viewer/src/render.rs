@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_2;
 
-use armada_sim::{Delivery, Event, HardpointKind, NONE, Order, World};
+use armada_sim::{Delivery, Event, HardpointKind, NO_TEAM, NONE, Order, World};
 use bevy::prelude::*;
 
 use crate::{
@@ -43,6 +43,15 @@ struct Explosion {
     size: f32,
 }
 
+/// One mesh per class, one material per team: everything batches.
+#[derive(Resource)]
+struct ShipAssets {
+    meshes: Vec<Handle<Mesh>>,
+    materials: Vec<Handle<StandardMaterial>>,
+    /// Ships with a view entity. Ids only grow, so this is a high-water mark.
+    spawned: usize,
+}
+
 #[derive(Resource)]
 struct FxAssets {
     sphere: Handle<Mesh>,
@@ -54,6 +63,7 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Startup, setup).add_systems(
         Update,
         (
+            spawn_views,
             sync_ships,
             spawn_explosions,
             animate_explosions,
@@ -61,6 +71,7 @@ pub fn plugin(app: &mut App) {
             draw_projectiles,
             draw_selection,
             draw_markers,
+            draw_points,
         ),
     );
 }
@@ -73,14 +84,17 @@ fn setup(
 ) {
     let w = &sim.world;
 
-    // One mesh per class, one material per team: everything batches.
     let class_meshes: Vec<Handle<Mesh>> = w
         .defs
         .ships
         .iter()
         .map(|d| {
             let r = d.radius.to_f32() * SCALE;
-            meshes.add(Cuboid::new(r * 0.9, r * 0.35, r * 2.2))
+            if d.is_mobile() {
+                meshes.add(Cuboid::new(r * 0.9, r * 0.35, r * 2.2))
+            } else {
+                meshes.add(Cylinder::new(r * 0.8, r * 0.25))
+            }
         })
         .collect();
     let team_materials: Vec<Handle<StandardMaterial>> = TEAM_COLORS
@@ -95,15 +109,11 @@ fn setup(
         })
         .collect();
 
-    for i in 0..w.ships.len() {
-        let team = usize::from(w.ships.team[i]) % team_materials.len();
-        commands.spawn((
-            ShipView(i),
-            Mesh3d(class_meshes[usize::from(w.ships.def[i])].clone()),
-            MeshMaterial3d(team_materials[team].clone()),
-            Transform::from_translation(to_render(w.ships.pos[i])),
-        ));
-    }
+    commands.insert_resource(ShipAssets {
+        meshes: class_meshes,
+        materials: team_materials,
+        spawned: 0,
+    });
 
     commands.spawn((
         DirectionalLight {
@@ -157,6 +167,25 @@ fn setup(
     });
 }
 
+/// View entities for ships that exist in the sim but not yet on screen:
+/// everything at start, then whatever stations build.
+fn spawn_views(mut commands: Commands, sim: Res<Sim>, assets: Option<ResMut<ShipAssets>>) {
+    let Some(mut assets) = assets else {
+        return;
+    };
+    let s = &sim.world.ships;
+    for i in assets.spawned..s.len() {
+        let team = usize::from(s.team[i]) % assets.materials.len();
+        commands.spawn((
+            ShipView(i),
+            Mesh3d(assets.meshes[usize::from(s.def[i])].clone()),
+            MeshMaterial3d(assets.materials[team].clone()),
+            Transform::from_translation(to_render(s.pos[i])),
+        ));
+    }
+    assets.spawned = s.len();
+}
+
 fn sync_ships(
     sim: Res<Sim>,
     fixed: Res<Time<Fixed>>,
@@ -174,7 +203,9 @@ fn sync_ships(
             *vis = Visibility::Hidden;
             continue;
         }
-        tf.translation = to_render(sim.prev_pos[i]).lerp(to_render(s.pos[i]), alpha);
+        // Ships built this tick have no previous position yet.
+        let prev = sim.prev_pos.get(i).copied().unwrap_or(s.pos[i]);
+        tf.translation = to_render(prev).lerp(to_render(s.pos[i]), alpha);
         let h = s.heading[i];
         tf.rotation = Quat::from_rotation_y(h.x.to_f32().atan2(h.y.to_f32()));
     }
@@ -362,6 +393,12 @@ fn draw_selection(
         if order_lines && let Some((to, color)) = order_line(w, i) {
             gizmos.line(pos, to, color);
         }
+        if !def.builds.is_empty() {
+            let rally = to_render(w.ships.rally[i]);
+            let color = Color::srgba(0.85, 1.0, 0.85, 0.35);
+            gizmos.line(pos, rally, color);
+            gizmos.circle(Isometry3d::new(rally + Vec3::Y, flat), 6.0, color);
+        }
 
         if dots {
             let first = w.ships.hp_first[i] as usize;
@@ -425,5 +462,30 @@ fn draw_markers(time: Res<Time>, mut markers: ResMut<Markers>, mut gizmos: Gizmo
             14.0 * (1.0 - t) + 3.0,
             color,
         );
+    }
+}
+
+/// Capture radius in the owner's color, inner ring grows with progress.
+fn draw_points(sim: Res<Sim>, mut gizmos: Gizmos) {
+    let w = &sim.world;
+    let p = &w.points;
+    let flat = Quat::from_rotation_x(FRAC_PI_2);
+    let r = w.rules.capture_radius.to_f32() * SCALE;
+    let full = f32::from(w.rules.capture_secs.max(1));
+    let color = |team: u8, intensity: f32, alpha: f32| {
+        if team == NO_TEAM {
+            Color::srgba(0.6, 0.6, 0.65, alpha)
+        } else {
+            team_color(team, intensity, alpha)
+        }
+    };
+    for k in 0..p.len() {
+        let at = Isometry3d::new(to_render(p.pos[k]) + Vec3::Y * 0.5, flat);
+        gizmos.circle(at, r, color(p.owner[k], 1.5, 0.6));
+        gizmos.circle(at, r * 0.12, color(p.owner[k], 2.5, 0.9));
+        if p.holder[k] != NO_TEAM && p.owner[k] != p.holder[k] {
+            let frac = f32::from(p.progress[k]) / full;
+            gizmos.circle(at, (r * frac).max(1.0), color(p.holder[k], 2.0, 0.7));
+        }
     }
 }

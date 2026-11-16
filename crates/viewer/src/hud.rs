@@ -1,5 +1,8 @@
-use armada_sim::{Delivery, HardpointKind, Order, TICK_HZ};
-use bevy::{prelude::*, text::FontSize};
+use armada_sim::{
+    Command, Delivery, HardpointKind, Order, TICK_HZ,
+    economy::{income, owned_points, pop_used},
+};
+use bevy::{picking::hover::Hovered, prelude::*, text::FontSize};
 
 use crate::{
     input::Selection,
@@ -18,7 +21,13 @@ H   halten     G   frei kämpfen\n\
 Strg + A   alle eigenen Schiffe\n\
 Strg + 1-9   Gruppe speichern     1-9   Gruppe wählen\n\
 F   Kamera auf Auswahl     WASD / Q E / Mausrad   Kamera\n\
+Z X C V   bauen     Rechtsklick auf Bauknopf   abbrechen\n\
+Rechtsklick mit Station gewählt   Sammelpunkt\n\
 Leertaste   Pause     + / -   Tempo     F5   Replay speichern";
+const BUILD_KEYS: [KeyCode; 4] = [KeyCode::KeyZ, KeyCode::KeyX, KeyCode::KeyC, KeyCode::KeyV];
+const BUILD_KEY_LABELS: [&str; 4] = ["Z", "X", "C", "V"];
+const PANEL_BG: Color = Color::srgba(0.05, 0.06, 0.09, 0.85);
+const PANEL_BORDER: Color = Color::srgba(0.6, 0.7, 0.9, 0.25);
 
 #[derive(Resource, Default)]
 pub struct Toast {
@@ -42,10 +51,28 @@ struct SelectionText;
 #[derive(Component)]
 struct HelpText;
 
+#[derive(Component)]
+struct OutcomeText;
+
+#[derive(Component)]
+struct BuildButton {
+    ship: u16,
+    key: KeyCode,
+}
+
+#[derive(Component)]
+struct BuildLabel(u16);
+
+#[derive(Component)]
+struct BuildProgress(u16);
+
 pub fn plugin(app: &mut App) {
     app.init_resource::<Toast>()
         .add_systems(Startup, spawn)
-        .add_systems(Update, (status, selection, help));
+        .add_systems(
+            Update,
+            (status, selection, help, build_input, build_bar, outcome),
+        );
 }
 
 fn text_bundle(font: &Handle<Font>, size: f32, node: Node) -> impl Bundle {
@@ -61,7 +88,7 @@ fn text_bundle(font: &Handle<Font>, size: f32, node: Node) -> impl Bundle {
     )
 }
 
-fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>) {
     // Bevy's built-in font is an ASCII subset and has no umlauts.
     let font = fonts.add(Font::from_bytes(
         include_bytes!("../assets/fonts/FiraSans-Regular.ttf").to_vec(),
@@ -96,7 +123,7 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         HelpText,
         Text::new(HELP),
         TextFont {
-            font: font.into(),
+            font: font.clone().into(),
             font_size: FontSize::Px(13.0),
             ..default()
         },
@@ -109,6 +136,173 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
         },
         Visibility::Hidden,
     ));
+
+    commands.spawn((
+        OutcomeText,
+        Text::new(""),
+        TextFont {
+            font: font.clone().into(),
+            font_size: FontSize::Px(64.0),
+            ..default()
+        },
+        TextColor(Color::srgba(0.95, 0.97, 1.0, 0.95)),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Percent(32.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+    ));
+
+    // Build bar, bottom center. Only with a station of our own to build at.
+    let Some(producer) = sim.player_producer().filter(|_| sim.mode == Mode::Live) else {
+        return;
+    };
+    let w = &sim.world;
+    let builds = w.defs.ships[usize::from(w.ships.def[producer as usize])]
+        .builds
+        .clone();
+    commands
+        .spawn(Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(12.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            column_gap: Val::Px(8.0),
+            ..default()
+        })
+        .with_children(|bar| {
+            for (k, &ship) in builds.iter().enumerate().take(BUILD_KEYS.len()) {
+                bar.spawn((
+                    Hovered::default(),
+                    BuildButton {
+                        ship,
+                        key: BUILD_KEYS[k],
+                    },
+                    Node {
+                        width: Val::Px(150.0),
+                        padding: UiRect::all(Val::Px(8.0)),
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(6.0),
+                        border: UiRect::all(Val::Px(1.0)),
+                        ..default()
+                    },
+                    BackgroundColor(PANEL_BG),
+                    BorderColor::all(PANEL_BORDER),
+                ))
+                .with_children(|b| {
+                    b.spawn((BuildLabel(ship), text_bundle(&font, 14.0, Node::default())));
+                    b.spawn((
+                        Node {
+                            height: Val::Px(3.0),
+                            width: Val::Percent(100.0),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.08)),
+                    ))
+                    .with_children(|track| {
+                        track.spawn((
+                            BuildProgress(ship),
+                            Node {
+                                height: Val::Percent(100.0),
+                                width: Val::Percent(0.0),
+                                ..default()
+                            },
+                            BackgroundColor(Color::srgb(0.55, 0.8, 1.0)),
+                        ));
+                    });
+                });
+            }
+        });
+}
+
+fn build_input(
+    buttons: Query<(&Hovered, &BuildButton)>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sim: ResMut<Sim>,
+) {
+    let Some(producer) = sim.player_producer() else {
+        return;
+    };
+    for (hover, b) in &buttons {
+        let hovered = hover.get();
+        if (hovered && mouse.just_pressed(MouseButton::Left)) || keys.just_pressed(b.key) {
+            sim.issue(Command::Build {
+                producer,
+                ship: b.ship,
+            });
+        }
+        if hovered && mouse.just_pressed(MouseButton::Right) {
+            sim.issue(Command::CancelBuild { producer });
+        }
+    }
+}
+
+fn build_bar(
+    sim: Res<Sim>,
+    mut labels: Query<(&BuildLabel, &mut Text, &mut TextColor)>,
+    mut bars: Query<(&BuildProgress, &mut Node)>,
+) {
+    let w = &sim.world;
+    let producer = sim.player_producer().map(|p| p as usize);
+    let queue: &[u16] = producer.map_or(&[], |p| &w.ships.queue[p]);
+    let credits = w.teams[usize::from(PLAYER_TEAM)].credits;
+    for (label, mut text, mut color) in &mut labels {
+        let def = &w.defs.ships[usize::from(label.0)];
+        let queued = queue.iter().filter(|&&q| q == label.0).count();
+        let count = if queued > 0 {
+            format!("   {queued}x")
+        } else {
+            String::new()
+        };
+        let key = def_key(w, producer, label.0);
+        text.0 = format!(
+            "{}{count}\n{} Cr   Pop {}   {key}",
+            def.display_name, def.cost, def.pop,
+        );
+        let alpha = if producer.is_some() && credits >= def.cost {
+            0.95
+        } else {
+            0.4
+        };
+        color.0 = Color::srgba(0.9, 0.93, 1.0, alpha);
+    }
+    for (bar, mut node) in &mut bars {
+        let frac = match (producer, queue.first()) {
+            (Some(p), Some(&front)) if front == bar.0 => {
+                let total = w.defs.ships[usize::from(front)].build_ticks.max(1);
+                w.ships.build_progress[p] as f32 / total as f32
+            }
+            _ => 0.0,
+        };
+        node.width = Val::Percent(frac * 100.0);
+    }
+}
+
+/// Hotkey label for a buildable ship: its slot in the producer's build list.
+fn def_key(w: &armada_sim::World, producer: Option<usize>, ship: u16) -> &'static str {
+    producer
+        .and_then(|p| {
+            w.defs.ships[usize::from(w.ships.def[p])]
+                .builds
+                .iter()
+                .position(|&b| b == ship)
+        })
+        .and_then(|k| BUILD_KEY_LABELS.get(k).copied())
+        .unwrap_or("")
+}
+
+fn outcome(sim: Res<Sim>, mut q: Query<&mut Text, With<OutcomeText>>) {
+    let Ok(mut text) = q.single_mut() else {
+        return;
+    };
+    text.0 = match sim.world.winner {
+        Some(t) if t == PLAYER_TEAM => "Sieg".into(),
+        Some(_) => "Niederlage".into(),
+        None => String::new(),
+    };
 }
 
 fn status(
@@ -133,8 +327,21 @@ fn status(
     } else {
         ""
     };
+    let economy = if w.rules.income > 0 || !w.points.is_empty() {
+        format!(
+            "\n{} Cr   +{}/s   Pop {} / {}   Punkte {} / {}",
+            w.teams[usize::from(PLAYER_TEAM)].credits,
+            income(w, PLAYER_TEAM),
+            pop_used(w, PLAYER_TEAM),
+            w.rules.pop_cap,
+            owned_points(w, PLAYER_TEAM),
+            w.points.len(),
+        )
+    } else {
+        String::new()
+    };
     text.0 = format!(
-        "{:02}:{:02}  {}x{mode}{paused}\nBlau {}   Rot {}   F1 Hilfe\n{toast_line}",
+        "{:02}:{:02}  {}x{mode}{paused}\nBlau {}   Rot {}   F1 Hilfe{economy}\n{toast_line}",
         secs / 60,
         secs % 60,
         SPEEDS[sim.speed],

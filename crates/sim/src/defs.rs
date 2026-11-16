@@ -40,6 +40,22 @@ pub struct ShipDef {
     /// Distance the ship holds to its target.
     pub engage_range: Fx,
     pub hardpoints: Vec<HardpointDef>,
+    /// Credits to build one.
+    pub cost: i32,
+    pub build_ticks: u32,
+    /// Population it takes up.
+    pub pop: u16,
+    /// Losing every critical ship loses the battle. Stations are critical.
+    pub critical: bool,
+    /// Ship types this one can build. Empty for everything but producers.
+    pub builds: Vec<u16>,
+}
+
+impl ShipDef {
+    /// Stations have no engines and never take part in formation moves.
+    pub fn is_mobile(&self) -> bool {
+        self.max_speed > Fx::ZERO
+    }
 }
 
 #[derive(Clone, Debug)]

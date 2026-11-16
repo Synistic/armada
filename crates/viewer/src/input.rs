@@ -1,5 +1,5 @@
 use armada_sim::Command;
-use bevy::{prelude::*, window::PrimaryWindow};
+use bevy::{picking::hover::Hovered, prelude::*, window::PrimaryWindow};
 
 use crate::{
     camera::Rig,
@@ -79,6 +79,11 @@ fn spawn_box(mut commands: Commands) {
     ));
 }
 
+/// The cursor is over a HUD button, so clicks belong to the HUD.
+fn over_ui(ui: &Query<&Hovered>) -> bool {
+    ui.iter().any(Hovered::get)
+}
+
 fn ctrl(keys: &ButtonInput<KeyCode>) -> bool {
     keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight])
 }
@@ -131,6 +136,7 @@ fn mouse_select(
     mut drag: ResMut<Drag>,
     mut sel: ResMut<Selection>,
     mut boxes: Query<(&mut Node, &mut Visibility), With<SelectionBox>>,
+    ui: Query<&Hovered>,
 ) {
     let (Ok(window), Ok((camera, cam_tf, rig)), Ok((mut node, mut vis))) =
         (windows.single(), cams.single(), boxes.single_mut())
@@ -141,7 +147,7 @@ fn mouse_select(
         return;
     };
 
-    if buttons.just_pressed(MouseButton::Left) {
+    if buttons.just_pressed(MouseButton::Left) && !over_ui(&ui) {
         drag.start = Some(cursor);
     }
     if let Some(start) = drag.start {
@@ -214,6 +220,7 @@ fn own_selected(sim: &Sim, sel: &Selection) -> Vec<u32> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mouse_orders(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
@@ -222,8 +229,9 @@ fn mouse_orders(
     mut sim: ResMut<Sim>,
     sel: Res<Selection>,
     mut markers: ResMut<Markers>,
+    ui: Query<&Hovered>,
 ) {
-    if !buttons.just_pressed(MouseButton::Right) || sim.mode != Mode::Live {
+    if !buttons.just_pressed(MouseButton::Right) || sim.mode != Mode::Live || over_ui(&ui) {
         return;
     }
     let (Ok(window), Ok((camera, cam_tf, rig))) = (windows.single(), cams.single()) else {
@@ -236,21 +244,38 @@ fn mouse_orders(
     if ships.is_empty() {
         return;
     }
+    let to = armada_sim::Vec2::new(
+        armada_sim::Fx::from_f64(f64::from(p.x / SCALE)),
+        armada_sim::Fx::from_f64(f64::from(p.z / SCALE)),
+    );
+
+    // Only stations selected: the click sets where new ships gather.
+    let w = &sim.world;
+    let def = |i: u32| &w.defs.ships[usize::from(w.ships.def[i as usize])];
+    if !ships.iter().any(|&i| def(i).is_mobile()) {
+        let producers: Vec<u32> = ships
+            .into_iter()
+            .filter(|&i| !def(i).builds.is_empty())
+            .collect();
+        if !producers.is_empty() {
+            sim.issue(Command::Rally { producers, to });
+            markers.0.push(Marker {
+                pos: p,
+                age: 0.0,
+                kind: MarkerKind::Move,
+            });
+        }
+        return;
+    }
 
     let (command, kind, at) =
         if let Some(target) = ship_at(&sim, p, rig.distance, |t| t != PLAYER_TEAM) {
             let at = to_render(sim.world.ships.pos[target as usize]);
             (Command::Attack { ships, target }, MarkerKind::Attack, at)
+        } else if ctrl(&keys) {
+            (Command::AttackMove { ships, to }, MarkerKind::AttackMove, p)
         } else {
-            let to = armada_sim::Vec2::new(
-                armada_sim::Fx::from_f64(f64::from(p.x / SCALE)),
-                armada_sim::Fx::from_f64(f64::from(p.z / SCALE)),
-            );
-            if ctrl(&keys) {
-                (Command::AttackMove { ships, to }, MarkerKind::AttackMove, p)
-            } else {
-                (Command::Move { ships, to }, MarkerKind::Move, p)
-            }
+            (Command::Move { ships, to }, MarkerKind::Move, p)
         };
     sim.issue(command);
     markers.0.push(Marker {

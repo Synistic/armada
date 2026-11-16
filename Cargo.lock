@@ -278,9 +278,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "armada-ai"
+version = "0.1.0"
+dependencies = [
+ "armada-sim",
+]
+
+[[package]]
 name = "armada-data"
 version = "0.1.0"
 dependencies = [
+ "armada-ai",
  "armada-sim",
  "ron",
  "serde",
@@ -290,6 +298,7 @@ dependencies = [
 name = "armada-headless"
 version = "0.1.0"
 dependencies = [
+ "armada-ai",
  "armada-data",
  "armada-sim",
 ]
@@ -305,6 +314,7 @@ dependencies = [
 name = "armada-viewer"
 version = "0.1.0"
 dependencies = [
+ "armada-ai",
  "armada-data",
  "armada-sim",
  "bevy",

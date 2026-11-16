@@ -46,7 +46,10 @@ fn same_input_same_hash() {
     let ca = run(&mut a, &log, TICKS, 15);
     let cb = run(&mut b, &log, TICKS, 15);
     assert_eq!(ca, cb);
-    assert!(a.ships.alive.iter().any(|x| !x), "no losses after {TICKS} ticks");
+    assert!(
+        a.ships.alive.iter().any(|x| !x),
+        "no losses after {TICKS} ticks"
+    );
 }
 
 #[test]
@@ -109,12 +112,53 @@ fn holding_ships_present_their_best_arc() {
             continue;
         }
         let def = &w.defs.ships[usize::from(s.def[i])];
-        let local = (s.pos[t as usize] - s.pos[i]).to_local(s.heading[i]).normalize_or_zero();
+        let local = (s.pos[t as usize] - s.pos[i])
+            .to_local(s.heading[i])
+            .normalize_or_zero();
         holding += 1;
         if local.dot(def.preferred_bearing) >= tolerance {
             on_bearing += 1;
         }
     }
     assert!(holding > 20, "only {holding} ships holding at tick 2400");
-    assert!(on_bearing * 4 >= holding * 3, "{on_bearing} of {holding} holding ships on bearing");
+    assert!(
+        on_bearing * 4 >= holding * 3,
+        "{on_bearing} of {holding} holding ships on bearing"
+    );
+}
+
+#[test]
+fn skirmish_ai_builds_captures_and_replays() {
+    let sources = read_sources(&content_dir().join("scenarios/skirmish.ron")).unwrap();
+    let (mut world, _) = build(&sources).unwrap();
+    let start_ships = world.ships.len();
+    let mut ais = [armada_ai::Ai::new(0), armada_ai::Ai::new(1)];
+    let mut log = CommandLog::default();
+    for _ in 0..6000 {
+        let tick = world.tick;
+        for ai in &mut ais {
+            for command in ai.think(&world) {
+                log.push(TimedCommand {
+                    tick,
+                    team: ai.team(),
+                    command,
+                });
+            }
+        }
+        armada_sim::step(&mut world, log.for_tick(tick));
+    }
+    assert!(
+        world.ships.len() > start_ships + 10,
+        "AI built too little: {}",
+        world.ships.len()
+    );
+    assert!(
+        world.points.owner.iter().any(|&o| o != armada_sim::NO_TEAM),
+        "no point captured"
+    );
+
+    // The log alone reproduces the match, no AI needed.
+    let (mut again, _) = build(&sources).unwrap();
+    run(&mut again, &log, 6000, 15);
+    assert_eq!(state_hash(&world), state_hash(&again));
 }

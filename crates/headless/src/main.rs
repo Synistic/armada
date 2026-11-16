@@ -1,11 +1,17 @@
 //! armada-headless run [scenario.ron] [--ticks N] [--record out.replay.ron]
 //! armada-headless verify <file.replay.ron>
+//!
+//! `run` lets the AI play both sides and records its commands, so `verify`
+//! replays without it.
 #![allow(clippy::float_arithmetic)]
 
 use std::{env, error::Error, fs, path::PathBuf, process::ExitCode, time::Instant};
 
-use armada_data::{REPLAY_FORMAT, Replay, build, content_dir, load_replay, read_sources, save_replay};
-use armada_sim::{CommandLog, World, run};
+use armada_ai::Ai;
+use armada_data::{
+    REPLAY_FORMAT, Replay, build, content_dir, load_replay, read_sources, save_replay,
+};
+use armada_sim::{CommandLog, TimedCommand, World, run, state_hash, step};
 
 const CHECKPOINT_EVERY: u32 = 15;
 
@@ -15,7 +21,9 @@ fn main() -> ExitCode {
         Some("run") => cmd_run(&args[1..]),
         Some("verify") => cmd_verify(&args[1..]),
         _ => {
-            eprintln!("usage:\n  armada-headless run [scenario.ron] [--ticks N] [--record out.replay.ron]\n  armada-headless verify <file.replay.ron>");
+            eprintln!(
+                "usage:\n  armada-headless run [scenario.ron] [--ticks N] [--record out.replay.ron]\n  armada-headless verify <file.replay.ron>"
+            );
             return ExitCode::from(2);
         }
     };
@@ -45,11 +53,36 @@ fn cmd_run(args: &[String]) -> Result<bool, Box<dyn Error>> {
     let sources = read_sources(&scenario)?;
     let (mut world, spec) = build(&sources)?;
     let ticks = ticks.unwrap_or(spec.ticks);
-    let log = CommandLog::default();
+    let mut log = CommandLog::default();
+    let mut ais = [Ai::new(0), Ai::new(1)];
 
-    println!("{} ships, {} hardpoints, {ticks} ticks", world.ships.len(), world.hardpoints.owner.len());
+    println!(
+        "{} ships, {} hardpoints, {ticks} ticks",
+        world.ships.len(),
+        world.hardpoints.owner.len()
+    );
     let start = Instant::now();
-    let checkpoints = run(&mut world, &log, ticks, CHECKPOINT_EVERY);
+    let mut checkpoints = Vec::new();
+    for _ in 0..ticks {
+        let tick = world.tick;
+        for ai in &mut ais {
+            for command in ai.think(&world) {
+                log.push(TimedCommand {
+                    tick,
+                    team: ai.team(),
+                    command,
+                });
+            }
+        }
+        step(&mut world, log.for_tick(tick));
+        if world.tick.is_multiple_of(CHECKPOINT_EVERY) {
+            checkpoints.push((world.tick, state_hash(&world)));
+        }
+        if world.winner.is_some() {
+            break;
+        }
+    }
+    let ticks = world.tick;
     let secs = start.elapsed().as_secs_f64();
 
     report(&world, ticks, secs);
@@ -91,7 +124,11 @@ fn cmd_verify(args: &[String]) -> Result<bool, Box<dyn Error>> {
             Ok(true)
         }
         None => {
-            println!("FAIL         checkpoint count {} vs {}", checkpoints.len(), replay.checkpoints.len());
+            println!(
+                "FAIL         checkpoint count {} vs {}",
+                checkpoints.len(),
+                replay.checkpoints.len()
+            );
             Ok(false)
         }
         Some((got, want)) => {
@@ -115,4 +152,19 @@ fn report(world: &World, ticks: u32, secs: f64) {
         world.alive_count(0),
         world.alive_count(1)
     );
+    if !world.points.is_empty() {
+        println!("points       {:?}", world.points.owner);
+        println!(
+            "credits      team 0: {}, team 1: {}",
+            world.teams[0].credits, world.teams[1].credits
+        );
+    }
+    match world.winner {
+        Some(t) => println!(
+            "winner       team {t} at {}:{:02}",
+            world.tick / 15 / 60,
+            world.tick / 15 % 60
+        ),
+        None => println!("winner       none yet"),
+    }
 }

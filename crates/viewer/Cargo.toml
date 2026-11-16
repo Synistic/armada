@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 armada-sim.workspace = true
 armada-data.workspace = true
+armada-ai.workspace = true
 bevy.workspace = true
 
 [lints]

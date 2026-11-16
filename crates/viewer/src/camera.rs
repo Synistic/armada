@@ -2,7 +2,10 @@ use bevy::{
     camera::Hdr, input::mouse::AccumulatedMouseScroll, post_process::bloom::Bloom, prelude::*,
 };
 
-use crate::{render::SCALE, sim::Sim};
+use crate::{
+    render::{SCALE, to_render},
+    sim::Sim,
+};
 
 const PITCH_DEG: f32 = 55.0;
 
@@ -17,7 +20,13 @@ pub fn plugin(app: &mut App) {
     app.add_systems(Startup, spawn).add_systems(Update, control);
 }
 
-fn spawn(mut commands: Commands) {
+fn spawn(mut commands: Commands, sim: Res<Sim>) {
+    // Start over the player's station if there is one.
+    let focus = sim
+        .player_producer()
+        .map_or(Vec3::new(0.0, 0.0, -450.0), |i| {
+            to_render(sim.world.ships.pos[i as usize]) + Vec3::Z * 120.0
+        });
     commands.spawn((
         Camera3d::default(),
         Hdr,
@@ -28,7 +37,7 @@ fn spawn(mut commands: Commands) {
         }),
         Transform::default(),
         Rig {
-            focus: Vec3::new(0.0, 0.0, -450.0),
+            focus,
             distance: 1600.0,
             // Behind team 0, which starts on negative y.
             yaw: std::f32::consts::PI,

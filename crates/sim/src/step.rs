@@ -4,6 +4,7 @@ use crate::{
     MAX_TEAMS, TICK_HZ,
     command::{Command, TimedCommand},
     defs::{Defs, Delivery, HardpointKind, WeaponDef},
+    economy,
     fixed::Fx,
     formation::line_formation,
     grid::Grid,
@@ -32,6 +33,10 @@ pub fn step(w: &mut World, commands: &[TimedCommand]) {
     projectiles(w);
     shields(w);
     deaths(w);
+    economy::capture(w);
+    economy::pay(w);
+    economy::produce(w);
+    economy::outcome(w);
     w.tick += 1;
 }
 
@@ -54,7 +59,9 @@ fn own_ships(s: &Ships, team: u8, ids: &[u32]) -> Vec<u32> {
 fn apply_command(w: &mut World, tc: &TimedCommand) {
     match &tc.command {
         Command::Move { ships, to } | Command::AttackMove { ships, to } => {
-            let ids = own_ships(&w.ships, tc.team, ships);
+            let mut ids = own_ships(&w.ships, tc.team, ships);
+            // A station in the selection must not pin the fleet to speed zero.
+            ids.retain(|&i| w.defs.ships[usize::from(w.ships.def[i as usize])].is_mobile());
             let Some(cap) = ids.iter().map(|&i| w.max_speed(i as usize)).min() else {
                 return;
             };
@@ -87,6 +94,18 @@ fn apply_command(w: &mut World, tc: &TimedCommand) {
         Command::Engage { ships } => {
             for id in own_ships(&w.ships, tc.team, ships) {
                 w.ships.order[id as usize] = Order::Engage;
+            }
+        }
+        Command::Build { producer, ship } => {
+            if usize::from(*ship) < w.defs.ships.len() {
+                economy::build(w, tc.team, *producer, *ship);
+            }
+        }
+        Command::CancelBuild { producer } => economy::cancel(w, tc.team, *producer),
+        Command::Rally { producers, to } => {
+            let to = to.clamp_box(w.arena_half);
+            for id in own_ships(&w.ships, tc.team, producers) {
+                w.ships.rally[id as usize] = to;
             }
         }
     }
@@ -135,7 +154,10 @@ fn retarget(w: &mut World) {
         }
         let current = w.ships.target[i];
         let lost = current == NONE || !w.ships.alive[current as usize];
-        let due = w.tick.wrapping_add(i as u32).is_multiple_of(RETARGET_INTERVAL);
+        let due = w
+            .tick
+            .wrapping_add(i as u32)
+            .is_multiple_of(RETARGET_INTERVAL);
         if lost || due {
             let t = nearest_enemy(w, i);
             w.ships.target[i] = t;
@@ -191,7 +213,8 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
         let pos = s.pos[i];
         let heading = s.heading[i];
         let target = s.target[i];
-        let target_pos = (target != NONE && s.alive[target as usize]).then(|| s.pos[target as usize]);
+        let target_pos =
+            (target != NONE && s.alive[target as usize]).then(|| s.pos[target as usize]);
         let max_speed = if s.flags[i] & FLAG_ENGINE_DOWN != 0 {
             def.max_speed / 2
         } else {
@@ -200,7 +223,9 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
 
         let goal = match (s.order[i], target_pos) {
             (Order::MoveTo { to, cap }, _) => Goal::Point(to, cap),
-            (Order::AttackMove { .. } | Order::Attack(_) | Order::Engage, Some(t)) => Goal::Fight(t),
+            (Order::AttackMove { .. } | Order::Attack(_) | Order::Engage, Some(t)) => {
+                Goal::Fight(t)
+            }
             (Order::AttackMove { to, cap }, None) => Goal::Point(to, cap),
             (Order::Engage, None) => match centroids[usize::from(s.team[i])] {
                 Some(c) => Goal::Point(c, max_speed),
@@ -210,7 +235,11 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
             (Order::Hold | Order::Attack(_), None) => Goal::Stay,
         };
 
-        let face = |t: Vec2| (t - pos).normalize_or_zero().heading_for_bearing(def.preferred_bearing);
+        let face = |t: Vec2| {
+            (t - pos)
+                .normalize_or_zero()
+                .heading_for_bearing(def.preferred_bearing)
+        };
         let (dir, want_speed) = match goal {
             Goal::Point(p, cap) => {
                 let to = p - pos;
@@ -287,7 +316,8 @@ fn weapons(w: &mut World) {
             continue;
         }
         let sdef = &defs.ships[usize::from(w.ships.def[owner])];
-        let HardpointKind::Weapon(weapon) = &sdef.hardpoints[usize::from(w.hardpoints.slot[h])].kind
+        let HardpointKind::Weapon(weapon) =
+            &sdef.hardpoints[usize::from(w.hardpoints.slot[h])].kind
         else {
             continue;
         };
@@ -313,7 +343,9 @@ fn weapons(w: &mut World) {
             } else if mount.can_hit(s, &defs, cached) {
                 cached
             } else if cached != NONE
-                || w.tick.wrapping_add(h as u32).is_multiple_of(RETARGET_INTERVAL)
+                || w.tick
+                    .wrapping_add(h as u32)
+                    .is_multiple_of(RETARGET_INTERVAL)
             {
                 mount.find_target(s, &defs, &w.grid)
             } else {
@@ -423,7 +455,10 @@ impl Mount<'_> {
             return false;
         }
         self.weapon.arc_cos <= -Fx::ONE
-            || to.to_local(self.heading).normalize_or_zero().dot(self.weapon.facing)
+            || to
+                .to_local(self.heading)
+                .normalize_or_zero()
+                .dot(self.weapon.facing)
                 >= self.weapon.arc_cos
     }
 

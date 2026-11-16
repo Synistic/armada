@@ -4,6 +4,7 @@
 
 pub mod command;
 pub mod defs;
+pub mod economy;
 pub mod fixed;
 pub mod formation;
 pub mod grid;
@@ -15,6 +16,7 @@ pub mod world;
 
 pub use command::{Command, CommandLog, TimedCommand};
 pub use defs::{Defs, Delivery, HardpointDef, HardpointKind, ShipDef, WeaponDef};
+pub use economy::{NO_TEAM, Rules};
 pub use fixed::Fx;
 pub use hash::state_hash;
 pub use step::step;

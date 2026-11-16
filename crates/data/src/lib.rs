@@ -10,15 +10,15 @@ use std::{
 };
 
 use armada_sim::{
-    CommandLog, Defs, Delivery, Fx, HardpointDef, HardpointKind, MAX_TEAMS, ShipDef, TICK_HZ, Vec2,
-    WeaponDef, World,
+    CommandLog, Defs, Delivery, Fx, HardpointDef, HardpointKind, MAX_TEAMS, Rules, ShipDef,
+    TICK_HZ, Vec2, WeaponDef, World,
 };
 use serde::{Deserialize, Serialize};
 
 const HZ: f64 = TICK_HZ as f64;
 /// By default ships hold this fraction of their longest weapon range to their target.
 const ENGAGE_FRACTION: f64 = 0.85;
-pub const REPLAY_FORMAT: u32 = 3;
+pub const REPLAY_FORMAT: u32 = 4;
 const PROJECTILE_TTL_FACTOR: f64 = 1.6;
 /// Candidate bearings when searching for the best broadside.
 const BEARING_STEPS: u32 = 72;
@@ -46,6 +46,22 @@ struct ShipSpec {
     #[serde(default)]
     engage_range: Option<f64>,
     hardpoints: Vec<HardpointSpec>,
+    #[serde(default)]
+    cost: i32,
+    /// Seconds.
+    #[serde(default)]
+    build_time: f64,
+    #[serde(default = "one")]
+    pop: u16,
+    #[serde(default)]
+    critical: bool,
+    /// Names of ship types this one can build.
+    #[serde(default)]
+    builds: Vec<String>,
+}
+
+fn one() -> u16 {
+    1
 }
 
 #[derive(Deserialize)]
@@ -92,6 +108,23 @@ pub struct ScenarioSpec {
     /// Relative to the scenario file. Later files override ships of the same name.
     pub ship_files: Vec<String>,
     fleets: Vec<FleetSpec>,
+    /// Unset: no economy, a plain fleet battle.
+    #[serde(default)]
+    economy: Option<EconomySpec>,
+    #[serde(default)]
+    points: Vec<(f64, f64)>,
+}
+
+#[derive(Deserialize)]
+struct EconomySpec {
+    start_credits: i32,
+    /// Credits per second.
+    income: i32,
+    point_income: i32,
+    pop_cap: u16,
+    capture_radius: f64,
+    /// Seconds.
+    capture_time: f64,
 }
 
 #[derive(Deserialize)]
@@ -169,7 +202,9 @@ fn read(path: &Path) -> Result<String, LoadError> {
 }
 
 fn parse_scenario(text: &str) -> Result<ScenarioSpec, LoadError> {
-    content_ron().from_str(text).map_err(|e| LoadError::Parse("scenario".into(), Box::new(e)))
+    content_ron()
+        .from_str(text)
+        .map_err(|e| LoadError::Parse("scenario".into(), Box::new(e)))
 }
 
 pub fn read_sources(scenario_path: &Path) -> Result<Sources, LoadError> {
@@ -245,8 +280,8 @@ fn best_bearing(arcs: &[ArcSpec]) -> (f64, f64) {
                 centered += a.dps * dot;
             }
         }
-        let better = dps > best_score.0 + EPS
-            || (dps > best_score.0 - EPS && centered > best_score.1 + EPS);
+        let better =
+            dps > best_score.0 + EPS || (dps > best_score.0 - EPS && centered > best_score.1 + EPS);
         if better {
             best_score = (dps, centered);
             best = b;
@@ -255,7 +290,8 @@ fn best_bearing(arcs: &[ArcSpec]) -> (f64, f64) {
     best
 }
 
-fn compile_ship(spec: ShipSpec) -> ShipDef {
+/// Returns the def and the names it builds, resolved once all files are read.
+fn compile_ship(spec: ShipSpec) -> (ShipDef, Vec<String>) {
     let mut max_range: Option<f64> = None;
     let mut arcs = Vec::new();
     let hardpoints = spec
@@ -323,7 +359,7 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
         .collect();
     let turn = (spec.turn_rate / HZ).to_radians();
 
-    ShipDef {
+    let def = ShipDef {
         name: spec.name,
         display_name: spec.display_name,
         hull: spec.hull,
@@ -336,25 +372,50 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
         preferred_bearing: fx_vec(best_bearing(&arcs)),
         radius: Fx::from_f64(spec.radius),
         sensor_range: Fx::from_f64(spec.sensor_range),
-        engage_range: Fx::from_f64(spec.engage_range.unwrap_or_else(|| {
-            max_range.unwrap_or(spec.sensor_range * 0.5) * ENGAGE_FRACTION
-        })),
+        engage_range: Fx::from_f64(
+            spec.engage_range
+                .unwrap_or_else(|| max_range.unwrap_or(spec.sensor_range * 0.5) * ENGAGE_FRACTION),
+        ),
         hardpoints,
-    }
+        cost: spec.cost,
+        build_ticks: (spec.build_time * HZ).round().max(1.0) as u32,
+        pop: spec.pop,
+        critical: spec.critical,
+        builds: Vec::new(),
+    };
+    (def, spec.builds)
 }
 
 fn compile_defs(ship_files: &[String]) -> Result<Defs, LoadError> {
     let mut defs = Defs::default();
+    let mut builds: Vec<Vec<String>> = Vec::new();
     for (i, text) in ship_files.iter().enumerate() {
-        let file: ShipFile =
-            content_ron().from_str(text).map_err(|e| LoadError::Parse(format!("ship file {i}"), Box::new(e)))?;
+        let file: ShipFile = content_ron()
+            .from_str(text)
+            .map_err(|e| LoadError::Parse(format!("ship file {i}"), Box::new(e)))?;
         for spec in file.ships {
-            let ship = compile_ship(spec);
+            let (ship, names) = compile_ship(spec);
             match defs.ship_index(&ship.name) {
-                Some(idx) => defs.ships[usize::from(idx)] = ship,
-                None => defs.ships.push(ship),
+                Some(idx) => {
+                    defs.ships[usize::from(idx)] = ship;
+                    builds[usize::from(idx)] = names;
+                }
+                None => {
+                    defs.ships.push(ship);
+                    builds.push(names);
+                }
             }
         }
+    }
+    for (i, names) in builds.iter().enumerate() {
+        let ids = names
+            .iter()
+            .map(|n| {
+                defs.ship_index(n)
+                    .ok_or_else(|| LoadError::UnknownShip(n.clone()))
+            })
+            .collect::<Result<_, _>>()?;
+        defs.ships[i].builds = ids;
     }
     Ok(defs)
 }
@@ -363,6 +424,18 @@ pub fn build(sources: &Sources) -> Result<(World, ScenarioSpec), LoadError> {
     let spec = parse_scenario(&sources.scenario)?;
     let defs = Arc::new(compile_defs(&sources.ship_files)?);
     let mut world = World::new(Arc::clone(&defs), spec.seed, Fx::from_f64(spec.arena_half));
+    if let Some(e) = &spec.economy {
+        world.rules = Rules {
+            income: e.income,
+            point_income: e.point_income,
+            pop_cap: e.pop_cap,
+            capture_radius: Fx::from_f64(e.capture_radius),
+            capture_secs: e.capture_time.round().clamp(1.0, f64::from(u16::MAX)) as u16,
+        };
+    }
+    for &p in &spec.points {
+        world.points.add(fx_vec(p));
+    }
 
     for fleet in &spec.fleets {
         if usize::from(fleet.team) >= MAX_TEAMS {
@@ -385,6 +458,9 @@ pub fn build(sources: &Sources) -> Result<(World, ScenarioSpec), LoadError> {
                 let pos = origin + Vec2::new(spacing * col - left, row_spacing * row);
                 world.spawn_ship(def, fleet.team, pos, heading);
             }
+        }
+        if let Some(e) = &spec.economy {
+            world.teams[usize::from(fleet.team)].credits = e.start_credits;
         }
     }
     Ok((world, spec))
@@ -410,7 +486,7 @@ pub fn content_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{best_bearing, det_cos, det_sin, ArcSpec};
+    use super::{ArcSpec, best_bearing, det_cos, det_sin};
 
     #[test]
     fn trig_matches_libm_closely() {

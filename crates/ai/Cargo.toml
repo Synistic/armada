@@ -1,0 +1,11 @@
+[package]
+name = "armada-ai"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+armada-sim.workspace = true
+
+[lints]
+workspace = true

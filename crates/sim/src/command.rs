@@ -8,14 +8,41 @@ use crate::vec::Vec2;
 pub enum Command {
     /// Move in formation at the speed of the slowest ship. Ships fire at
     /// whatever comes into arc but do not break formation.
-    Move { ships: Vec<u32>, to: Vec2 },
+    Move {
+        ships: Vec<u32>,
+        to: Vec2,
+    },
     /// Like `Move`, but ships break off to fight anything they meet.
-    AttackMove { ships: Vec<u32>, to: Vec2 },
-    Attack { ships: Vec<u32>, target: u32 },
+    AttackMove {
+        ships: Vec<u32>,
+        to: Vec2,
+    },
+    Attack {
+        ships: Vec<u32>,
+        target: u32,
+    },
     /// Hold position, keep firing, turn guns toward the nearest enemy.
-    Stop { ships: Vec<u32> },
+    Stop {
+        ships: Vec<u32>,
+    },
     /// Back to the autonomous stance: hunt the nearest enemy.
-    Engage { ships: Vec<u32> },
+    Engage {
+        ships: Vec<u32>,
+    },
+    /// Queue a ship at a producer. Paid on queueing.
+    Build {
+        producer: u32,
+        ship: u16,
+    },
+    /// Drop the last queued ship at a producer, full refund.
+    CancelBuild {
+        producer: u32,
+    },
+    /// Where a producer sends the ships it builds.
+    Rally {
+        producers: Vec<u32>,
+        to: Vec2,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

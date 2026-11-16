@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 armada-sim = { path = "crates/sim" }
 armada-data = { path = "crates/data" }
+armada-ai = { path = "crates/ai" }
 serde = { version = "1", features = ["derive"] }
 ron = "0.12"
 bevy = "0.20"

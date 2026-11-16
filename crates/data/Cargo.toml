@@ -11,3 +11,6 @@ ron.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+armada-ai.workspace = true

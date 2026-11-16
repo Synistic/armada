@@ -11,16 +11,20 @@ Space battles only. Each milestone ends in something you can play, not just code
 - Orders: move, attack-move, attack, hold, engage. Line formations, control groups
 - Beams, homing missiles and torpedoes with shield bypass
 - Bevy viewer with selection, HUD, explosions, photo mode
+- Skirmish: stations, credits, population cap, build queue, capture points, AI opponent,
+  victory and defeat
 
 ## 1. Skirmish loop
 
 Turns the tech demo into a game: you can win or lose against an AI.
 
-- Space station per side: builds ships, is the win condition
-- Credits from income and capture points, population cap
-- Build queue in the HUD
-- Enemy AI that only uses commands, like a player would
-- Victory and defeat screen, start menu with scenario choice
+- [x] Space station per side: builds ships, is the win condition
+- [x] Credits from income and capture points, population cap
+- [x] Build queue in the HUD
+- [x] Enemy AI that only uses commands, like a player would
+- [x] Victory and defeat screen
+- [ ] Start menu with scenario choice and AI difficulty
+- [ ] Balance pass: match length, station strength, costs
 
 ## 2. Combat depth
 

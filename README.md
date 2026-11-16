@@ -9,13 +9,14 @@ written in Rust and Bevy. Early and changing fast.
 | | |
 |---|---|
 | ![Overview](docs/screenshots/overview.png) | ![Late battle](docs/screenshots/late.png) |
-| ![Inspecting a ship](docs/screenshots/selection.png) | |
+| ![Inspecting a ship](docs/screenshots/selection.png) | ![Skirmish](docs/screenshots/skirmish.png) |
 
 ## Layout
 
 ```
 crates/
   sim/       deterministic simulation, depends on serde only
+  ai/        skirmish AI, talks to the sim through commands only
   data/      RON content -> compiled defs, scenarios, replays
   headless/  CLI: run battles, record and verify replays, benchmark
   viewer/    Bevy, read-only view on the sim
@@ -27,10 +28,11 @@ content/
 ## Commands
 
 ```
-cargo run --release -p armada-headless -- run --record target/clash.replay.ron
-cargo run --release -p armada-headless -- verify target/clash.replay.ron
-cargo run --release -p armada-viewer
-cargo run --release -p armada-viewer -- --replay target/clash.replay.ron
+cargo run --release -p armada-viewer                                   # skirmish vs AI
+cargo run --release -p armada-viewer -- content/scenarios/fleet_clash.ron  # 1000 vs 1000
+cargo run --release -p armada-headless -- run content/scenarios/skirmish.ron --record target/sk.replay.ron
+cargo run --release -p armada-headless -- verify target/sk.replay.ron
+cargo run --release -p armada-viewer -- --replay target/sk.replay.ron
 cargo test --workspace
 ```
 
@@ -57,7 +59,17 @@ that only show up after 20 minutes on someone else's machine.
 ## Tick order
 
 commands -> spatial grid -> centroids -> retarget (staggered, every 8 ticks) -> movement
-(velocity pass, then integrate) -> weapons -> projectiles -> shield regen -> deaths.
+(velocity pass, then integrate) -> weapons -> projectiles -> shield regen -> deaths ->
+capture points -> income -> production -> outcome.
+
+## Skirmish
+
+Each side has a station that builds ships and is the win condition. Credits come from a base
+income plus every owned capture point. A point flips after a lone team holds it for a while;
+an enemy point first drains to neutral. Ships cost credits up front and take population.
+
+The AI lives in its own crate and only sends commands, like a player. Headless `run` lets it
+play both sides, and since its commands go into the log, `verify` replays without it.
 
 ## Orders
 

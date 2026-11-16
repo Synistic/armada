@@ -5,6 +5,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use armada_ai::Ai;
 use armada_data::{
     REPLAY_FORMAT, Replay, Sources, build, content_dir, load_replay, read_sources, save_replay,
 };
@@ -33,6 +34,8 @@ pub struct Sim {
     log: CommandLog,
     sources: Sources,
     checkpoints: Vec<(u32, u64)>,
+    /// Computer players. Their commands go into the log like the player's.
+    ais: Vec<Ai>,
 }
 
 /// Events of every tick since the last frame. `World::events` only holds the
@@ -41,7 +44,7 @@ pub struct Sim {
 pub struct FrameEvents(pub Vec<Event>);
 
 impl Sim {
-    /// `auto`: the player's fleet fights on its own instead of waiting for orders.
+    /// `auto`: the AI plays the player's side too, for the photo mode.
     pub fn load(args: &[String], auto: bool) -> Result<Self, Box<dyn Error>> {
         let (sources, log, mode) = if args.first().map(String::as_str) == Some("--replay") {
             let path = PathBuf::from(args.get(1).ok_or("--replay needs a path")?);
@@ -51,7 +54,7 @@ impl Sim {
             let scenario = args
                 .first()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| content_dir().join("scenarios/fleet_clash.ron"));
+                .unwrap_or_else(|| content_dir().join("scenarios/skirmish.ron"));
             (read_sources(&scenario)?, CommandLog::default(), Mode::Live)
         };
         let (world, _) = build(&sources)?;
@@ -65,7 +68,14 @@ impl Sim {
             log,
             sources,
             checkpoints: Vec::new(),
+            ais: Vec::new(),
         };
+        if mode == Mode::Live {
+            if auto {
+                sim.ais.push(Ai::new(PLAYER_TEAM));
+            }
+            sim.ais.push(Ai::new(1));
+        }
         if mode == Mode::Live && !auto {
             // The player's fleet waits for orders instead of charging.
             let ships = (0..sim.world.ships.len() as u32)
@@ -86,11 +96,33 @@ impl Sim {
 
     fn advance(&mut self) {
         let tick = self.world.tick;
+        for ai in &mut self.ais {
+            for command in ai.think(&self.world) {
+                self.log.push(TimedCommand {
+                    tick,
+                    team: ai.team(),
+                    command,
+                });
+            }
+        }
         step(&mut self.world, self.log.for_tick(tick));
         if self.world.tick.is_multiple_of(CHECKPOINT_EVERY) {
             self.checkpoints
                 .push((self.world.tick, state_hash(&self.world)));
         }
+    }
+
+    /// Player's first producer, if it still stands.
+    pub fn player_producer(&self) -> Option<u32> {
+        let s = &self.world.ships;
+        (0..s.len()).find_map(|i| {
+            let ok = s.alive[i]
+                && s.team[i] == PLAYER_TEAM
+                && !self.world.defs.ships[usize::from(s.def[i])]
+                    .builds
+                    .is_empty();
+            ok.then_some(i as u32)
+        })
     }
 
     /// Queue a player command for the next tick. Ignored in replays.

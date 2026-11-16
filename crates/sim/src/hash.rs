@@ -46,7 +46,11 @@ pub fn state_hash(w: &World) -> u64 {
             Order::Engage => h.u64(0),
             Order::Hold => h.u64(1),
             Order::MoveTo { to, cap } | Order::AttackMove { to, cap } => {
-                h.u64(if matches!(s.order[i], Order::MoveTo { .. }) { 2 } else { 3 });
+                h.u64(if matches!(s.order[i], Order::MoveTo { .. }) {
+                    2
+                } else {
+                    3
+                });
                 h.i64(to.x.0);
                 h.i64(to.y.0);
                 h.i64(cap.0);
@@ -56,7 +60,26 @@ pub fn state_hash(w: &World) -> u64 {
                 h.u64(u64::from(t));
             }
         }
+        h.u64(s.queue[i].len() as u64);
+        for &q in &s.queue[i] {
+            h.u64(u64::from(q));
+        }
+        h.u64(u64::from(s.build_progress[i]));
+        h.i64(s.rally[i].x.0);
+        h.i64(s.rally[i].y.0);
     }
+
+    for t in &w.teams {
+        h.u64(u64::from(t.present) | u64::from(t.has_critical) << 1 | u64::from(t.defeated) << 2);
+        h.i64(i64::from(t.credits));
+    }
+    let pts = &w.points;
+    for k in 0..pts.len() {
+        h.u64(u64::from(pts.owner[k]));
+        h.u64(u64::from(pts.holder[k]));
+        h.u64(u64::from(pts.progress[k]));
+    }
+    h.u64(w.winner.map_or(u64::MAX, u64::from));
 
     let hp = &w.hardpoints;
     for i in 0..hp.owner.len() {
