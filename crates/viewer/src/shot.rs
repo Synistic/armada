@@ -3,6 +3,7 @@
 //! Fast-forwards the battle, runs the last ticks live so beams and explosions
 //! are on screen, saves one frame and quits. Both fleets fight on their own.
 //! The sim is deterministic, so the same flags always give the same picture.
+//! `--tick 0` without a scenario photographs the start menu.
 
 use std::path::PathBuf;
 
@@ -23,6 +24,8 @@ use crate::{
 pub const LIVE_TICKS: u32 = 20;
 /// Frames to wait after requesting the screenshot before quitting.
 const EXIT_DELAY: u32 = 15;
+/// Frames the start menu gets to lay out before its picture.
+const MENU_FRAMES: u32 = 30;
 
 #[derive(Resource, Clone)]
 pub struct Shot {
@@ -84,8 +87,11 @@ impl Shot {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(PostStartup, setup)
-        .add_systems(Update, capture);
+    app.add_systems(
+        OnEnter(crate::Screen::Game),
+        setup.after(crate::camera::spawn),
+    )
+    .add_systems(Update, capture);
 }
 
 fn setup(shot: Res<Shot>, sim: Res<Sim>, mut sel: ResMut<Selection>, mut q: Query<&mut Rig>) {
@@ -114,12 +120,15 @@ fn setup(shot: Res<Shot>, sim: Res<Sim>, mut sel: ResMut<Selection>, mut q: Quer
 fn capture(
     mut commands: Commands,
     shot: Res<Shot>,
-    sim: Res<Sim>,
+    sim: Option<Res<Sim>>,
+    mut frames: Local<u32>,
     mut taken: Local<Option<u32>>,
     mut exit: MessageWriter<AppExit>,
 ) {
+    *frames += 1;
+    let ready = sim.map_or(*frames >= MENU_FRAMES, |sim| sim.world.tick >= shot.tick);
     match *taken {
-        None if sim.world.tick >= shot.tick => {
+        None if ready => {
             commands
                 .spawn(Screenshot::primary_window())
                 .observe(save_to_disk(shot.out.clone()));

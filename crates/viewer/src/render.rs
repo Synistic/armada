@@ -4,6 +4,7 @@ use armada_sim::{Delivery, Event, HardpointKind, NO_TEAM, NONE, Order, World};
 use bevy::prelude::*;
 
 use crate::{
+    Screen,
     input::{MarkerKind, Markers, Selection},
     sim::{FrameEvents, Sim},
 };
@@ -60,7 +61,7 @@ struct FxAssets {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, setup).add_systems(
+    app.add_systems(OnEnter(Screen::Game), setup).add_systems(
         Update,
         (
             spawn_views,
@@ -72,7 +73,8 @@ pub fn plugin(app: &mut App) {
             draw_selection,
             draw_markers,
             draw_points,
-        ),
+        )
+            .run_if(in_state(Screen::Game)),
     );
 }
 
@@ -116,6 +118,7 @@ fn setup(
     });
 
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         DirectionalLight {
             illuminance: 12_000.0,
             ..default()
@@ -142,6 +145,7 @@ fn setup(
         let dir = Vec3::new(rand() - 0.5, rand() - 0.5, rand() - 0.5).normalize_or(Vec3::NEG_Y);
         let size = 3.0 + rand() * rand() * 12.0;
         commands.spawn((
+            DespawnOnExit(Screen::Game),
             Mesh3d(sphere.clone()),
             MeshMaterial3d(star.clone()),
             Transform::from_translation(dir * STAR_SHELL).with_scale(Vec3::splat(size)),
@@ -177,6 +181,7 @@ fn spawn_views(mut commands: Commands, sim: Res<Sim>, assets: Option<ResMut<Ship
     for i in assets.spawned..s.len() {
         let team = usize::from(s.team[i]) % assets.materials.len();
         commands.spawn((
+            DespawnOnExit(Screen::Game),
             ShipView(i),
             Mesh3d(assets.meshes[usize::from(s.def[i])].clone()),
             MeshMaterial3d(assets.materials[team].clone()),
@@ -241,6 +246,7 @@ fn spawn_explosions(
             _ => continue,
         };
         commands.spawn((
+            DespawnOnExit(Screen::Game),
             Explosion {
                 age: 0.0,
                 life,

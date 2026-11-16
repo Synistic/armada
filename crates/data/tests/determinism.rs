@@ -132,7 +132,10 @@ fn skirmish_ai_builds_captures_and_replays() {
     let sources = read_sources(&content_dir().join("scenarios/skirmish.ron")).unwrap();
     let (mut world, _) = build(&sources).unwrap();
     let start_ships = world.ships.len();
-    let mut ais = [armada_ai::Ai::new(0), armada_ai::Ai::new(1)];
+    let mut ais = [
+        armada_ai::Ai::new(0, armada_ai::Difficulty::Normal),
+        armada_ai::Ai::new(1, armada_ai::Difficulty::Normal),
+    ];
     let mut log = CommandLog::default();
     for _ in 0..6000 {
         let tick = world.tick;

@@ -1,11 +1,11 @@
 use std::{
     error::Error,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use armada_ai::Ai;
+use armada_ai::{Ai, Difficulty};
 use armada_data::{
     REPLAY_FORMAT, Replay, Sources, build, content_dir, load_replay, read_sources, save_replay,
 };
@@ -13,6 +13,8 @@ use armada_sim::{
     Command, CommandLog, Event, TICK_HZ, TimedCommand, Vec2, World, state_hash, step,
 };
 use bevy::prelude::*;
+
+use crate::{Screen, reset};
 
 pub const PLAYER_TEAM: u8 = 0;
 pub const SPEEDS: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
@@ -57,6 +59,28 @@ impl Sim {
                 .unwrap_or_else(|| content_dir().join("scenarios/skirmish.ron"));
             (read_sources(&scenario)?, CommandLog::default(), Mode::Live)
         };
+        Self::start(sources, log, mode, auto, Difficulty::Normal)
+    }
+
+    /// A live battle from the start menu.
+    pub fn scenario(path: &Path, difficulty: Difficulty) -> Result<Self, Box<dyn Error>> {
+        let sources = read_sources(path)?;
+        Self::start(
+            sources,
+            CommandLog::default(),
+            Mode::Live,
+            false,
+            difficulty,
+        )
+    }
+
+    fn start(
+        sources: Sources,
+        log: CommandLog,
+        mode: Mode,
+        auto: bool,
+        difficulty: Difficulty,
+    ) -> Result<Self, Box<dyn Error>> {
         let (world, _) = build(&sources)?;
 
         let mut sim = Self {
@@ -72,9 +96,9 @@ impl Sim {
         };
         if mode == Mode::Live {
             if auto {
-                sim.ais.push(Ai::new(PLAYER_TEAM));
+                sim.ais.push(Ai::new(PLAYER_TEAM, Difficulty::Normal));
             }
-            sim.ais.push(Ai::new(1));
+            sim.ais.push(Ai::new(1, difficulty));
         }
         if mode == Mode::Live && !auto {
             // The player's fleet waits for orders instead of charging.
@@ -155,8 +179,9 @@ impl Sim {
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<FrameEvents>()
-        .add_systems(FixedUpdate, tick)
-        .add_systems(Update, time_controls);
+        .add_systems(FixedUpdate, tick.run_if(in_state(Screen::Game)))
+        .add_systems(Update, time_controls.run_if(in_state(Screen::Game)))
+        .add_systems(OnExit(Screen::Game), (leave, reset::<FrameEvents>));
 }
 
 fn tick(mut sim: ResMut<Sim>, mut events: ResMut<FrameEvents>) {
@@ -169,11 +194,20 @@ fn tick(mut sim: ResMut<Sim>, mut events: ResMut<FrameEvents>) {
     events.0.extend_from_slice(&sim.world.events);
 }
 
+fn leave(mut commands: Commands, mut fixed: ResMut<Time<Fixed>>) {
+    commands.remove_resource::<Sim>();
+    fixed.set_timestep_hz(f64::from(TICK_HZ));
+}
+
 fn time_controls(
     keys: Res<ButtonInput<KeyCode>>,
     mut sim: ResMut<Sim>,
     mut fixed: ResMut<Time<Fixed>>,
+    mut next: ResMut<NextState<Screen>>,
 ) {
+    if keys.just_pressed(KeyCode::F10) {
+        next.set(Screen::Menu);
+    }
     if keys.just_pressed(KeyCode::Space) {
         sim.paused = !sim.paused;
     }

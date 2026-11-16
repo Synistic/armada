@@ -4,8 +4,6 @@
 
 use armada_sim::{Command, Fx, NONE, Order, Vec2, World, economy::pop_used};
 
-/// Think once per second, staggered by team.
-const THINK_EVERY: u32 = 15;
 const BUILD_ORDER: [&str; 10] = [
     "corvette",
     "corvette",
@@ -18,33 +16,92 @@ const BUILD_ORDER: [&str; 10] = [
     "cruiser",
     "dreadnought",
 ];
-/// Keep this many ships queued so the station never idles.
-const QUEUE_TARGET: usize = 2;
 /// Ships closer than this to the station count as waiting at home.
 const HOME_RADIUS: i64 = 2500;
 /// Enemies closer than this to the station pull everything back.
 const DEFEND_RADIUS: i64 = 3500;
-/// Credits worth of ships that make up the first attack wave.
-const FIRST_WAVE: i32 = 900;
-const WAVE_STEP: i32 = 500;
 const MAX_WAVE: i32 = 6000;
 /// Population share in percent at which every waiting ship attacks.
 const MAXED_PCT: u32 = 85;
 /// A ship this close to its attack-move point has arrived.
 const ARRIVED: i64 = 600;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Difficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+}
+
+impl Difficulty {
+    pub const ALL: [Self; 3] = [Self::Easy, Self::Normal, Self::Hard];
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "easy" => Some(Self::Easy),
+            "normal" => Some(Self::Normal),
+            "hard" => Some(Self::Hard),
+            _ => None,
+        }
+    }
+
+    /// No cheats on any level: harder means faster reactions, a fuller
+    /// queue, earlier attacks and using the whole population cap.
+    fn tuning(self) -> Tuning {
+        match self {
+            Self::Easy => Tuning {
+                think_every: 45,
+                queue_target: 1,
+                first_wave: 1600,
+                wave_step: 800,
+                pop_pct: 55,
+            },
+            Self::Normal => Tuning {
+                think_every: 15,
+                queue_target: 2,
+                first_wave: 900,
+                wave_step: 500,
+                pop_pct: 100,
+            },
+            Self::Hard => Tuning {
+                think_every: 5,
+                queue_target: 3,
+                first_wave: 600,
+                wave_step: 350,
+                pop_pct: 100,
+            },
+        }
+    }
+}
+
+struct Tuning {
+    /// Ticks between two looks at the world, staggered by team.
+    think_every: u32,
+    /// Ships kept queued so the station never idles.
+    queue_target: usize,
+    /// Credits worth of ships that make up the first attack wave.
+    first_wave: i32,
+    wave_step: i32,
+    /// Share of the population cap in percent the AI builds up to.
+    pop_pct: u32,
+}
+
 pub struct Ai {
     team: u8,
     cursor: usize,
     wave: i32,
+    tune: Tuning,
 }
 
 impl Ai {
-    pub fn new(team: u8) -> Self {
+    pub fn new(team: u8, difficulty: Difficulty) -> Self {
+        let tune = difficulty.tuning();
         Self {
             team,
             cursor: 0,
-            wave: FIRST_WAVE,
+            wave: tune.first_wave,
+            tune,
         }
     }
 
@@ -59,7 +116,7 @@ impl Ai {
             || !w
                 .tick
                 .wrapping_add(u32::from(self.team))
-                .is_multiple_of(THINK_EVERY)
+                .is_multiple_of(self.tune.think_every)
         {
             return out;
         }
@@ -122,13 +179,13 @@ impl Ai {
             .map(|&i| w.defs.ships[usize::from(s.def[i as usize])].cost.max(50))
             .sum();
         // Close to the population cap there is nothing left to wait for.
-        let maxed = pop_used(w, self.team) * 100 >= u32::from(w.rules.pop_cap) * MAXED_PCT;
+        let maxed = pop_used(w, self.team) * 100 >= self.pop_limit(w) * MAXED_PCT;
         if !idle.is_empty()
             && (strength >= self.wave || maxed)
             && let Some(to) = self.objective(w, home_pos)
         {
             out.push(Command::AttackMove { ships: idle, to });
-            self.wave = (self.wave + WAVE_STEP).min(MAX_WAVE);
+            self.wave = (self.wave + self.tune.wave_step).min(MAX_WAVE);
         }
 
         // Ships that reached their point and found nothing to shoot move on.
@@ -150,6 +207,10 @@ impl Ai {
         out
     }
 
+    fn pop_limit(&self, w: &World) -> u32 {
+        u32::from(w.rules.pop_cap) * self.tune.pop_pct / 100
+    }
+
     fn producer(&self, w: &World) -> Option<u32> {
         let s = &w.ships;
         (0..s.len()).find_map(|i| {
@@ -164,7 +225,7 @@ impl Ai {
     /// money instead of skipping, so expensive ships do get built.
     fn build(&mut self, w: &World, home: u32) -> Option<Command> {
         let h = home as usize;
-        if w.ships.queue[h].len() >= QUEUE_TARGET {
+        if w.ships.queue[h].len() >= self.tune.queue_target {
             return None;
         }
         let builds = &w.defs.ships[usize::from(w.ships.def[h])].builds;
@@ -173,8 +234,7 @@ impl Ai {
             match w.defs.ship_index(name) {
                 Some(id) if builds.contains(&id) => {
                     let d = &w.defs.ships[usize::from(id)];
-                    let pop_ok =
-                        pop_used(w, self.team) + u32::from(d.pop) <= u32::from(w.rules.pop_cap);
+                    let pop_ok = pop_used(w, self.team) + u32::from(d.pop) <= self.pop_limit(w);
                     if !pop_ok {
                         // Does not fit, try something smaller.
                         self.cursor += 1;

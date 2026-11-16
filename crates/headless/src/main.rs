@@ -1,4 +1,4 @@
-//! armada-headless run [scenario.ron] [--ticks N] [--record out.replay.ron]
+//! armada-headless run [scenario.ron] [--ticks N] [--ai easy,hard] [--record out.replay.ron]
 //! armada-headless verify <file.replay.ron>
 //!
 //! `run` lets the AI play both sides and records its commands, so `verify`
@@ -7,7 +7,7 @@
 
 use std::{env, error::Error, fs, path::PathBuf, process::ExitCode, time::Instant};
 
-use armada_ai::Ai;
+use armada_ai::{Ai, Difficulty};
 use armada_data::{
     REPLAY_FORMAT, Replay, build, content_dir, load_replay, read_sources, save_replay,
 };
@@ -22,7 +22,7 @@ fn main() -> ExitCode {
         Some("verify") => cmd_verify(&args[1..]),
         _ => {
             eprintln!(
-                "usage:\n  armada-headless run [scenario.ron] [--ticks N] [--record out.replay.ron]\n  armada-headless verify <file.replay.ron>"
+                "usage:\n  armada-headless run [scenario.ron] [--ticks N] [--ai easy,hard] [--record out.replay.ron]\n  armada-headless verify <file.replay.ron>"
             );
             return ExitCode::from(2);
         }
@@ -41,11 +41,18 @@ fn cmd_run(args: &[String]) -> Result<bool, Box<dyn Error>> {
     let mut scenario = content_dir().join("scenarios/fleet_clash.ron");
     let mut ticks = None;
     let mut record = None;
+    let mut levels = [Difficulty::Normal; 2];
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--ticks" => ticks = Some(it.next().ok_or("--ticks needs a value")?.parse::<u32>()?),
             "--record" => record = Some(PathBuf::from(it.next().ok_or("--record needs a path")?)),
+            "--ai" => {
+                let v = it.next().ok_or("--ai needs <team0>,<team1>")?;
+                for (slot, name) in levels.iter_mut().zip(v.split(',')) {
+                    *slot = Difficulty::parse(name).ok_or("difficulty is easy, normal or hard")?;
+                }
+            }
             other => scenario = PathBuf::from(other),
         }
     }
@@ -54,7 +61,7 @@ fn cmd_run(args: &[String]) -> Result<bool, Box<dyn Error>> {
     let (mut world, spec) = build(&sources)?;
     let ticks = ticks.unwrap_or(spec.ticks);
     let mut log = CommandLog::default();
-    let mut ais = [Ai::new(0), Ai::new(1)];
+    let mut ais = [Ai::new(0, levels[0]), Ai::new(1, levels[1])];
 
     println!(
         "{} ships, {} hardpoints, {ticks} ticks",

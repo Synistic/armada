@@ -102,6 +102,9 @@ fn full_arc() -> f64 {
 
 #[derive(Deserialize)]
 pub struct ScenarioSpec {
+    /// Shown in the start menu.
+    #[serde(default)]
+    pub name: String,
     pub seed: u64,
     pub arena_half: f64,
     pub ticks: u32,
@@ -205,6 +208,17 @@ fn parse_scenario(text: &str) -> Result<ScenarioSpec, LoadError> {
     content_ron()
         .from_str(text)
         .map_err(|e| LoadError::Parse("scenario".into(), Box::new(e)))
+}
+
+/// Menu name of a scenario file, the file name if it has none.
+pub fn scenario_name(path: &Path) -> Result<String, LoadError> {
+    let spec = parse_scenario(&read(path)?)?;
+    Ok(if spec.name.is_empty() {
+        path.file_stem()
+            .map_or_else(String::new, |s| s.to_string_lossy().into_owned())
+    } else {
+        spec.name
+    })
 }
 
 pub fn read_sources(scenario_path: &Path) -> Result<Sources, LoadError> {

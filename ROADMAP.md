@@ -23,7 +23,7 @@ Turns the tech demo into a game: you can win or lose against an AI.
 - [x] Build queue in the HUD
 - [x] Enemy AI that only uses commands, like a player would
 - [x] Victory and defeat screen
-- [ ] Start menu with scenario choice and AI difficulty
+- [x] Start menu with scenario choice and AI difficulty
 - [ ] Balance pass: match length, station strength, costs
 
 ## 2. Combat depth

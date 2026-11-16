@@ -2,9 +2,11 @@ use armada_sim::Command;
 use bevy::{picking::hover::Hovered, prelude::*, window::PrimaryWindow};
 
 use crate::{
+    Screen,
     camera::Rig,
     hud::Toast,
     render::{SCALE, to_render},
+    reset,
     sim::{Mode, PLAYER_TEAM, Sim},
 };
 
@@ -58,15 +60,22 @@ pub fn plugin(app: &mut App) {
     app.init_resource::<Selection>()
         .init_resource::<Markers>()
         .init_resource::<Drag>()
-        .add_systems(Startup, spawn_box)
+        .add_systems(OnEnter(Screen::Game), spawn_box)
         .add_systems(
             Update,
-            (prune_dead, mouse_select, mouse_orders, hotkeys).chain(),
+            (prune_dead, mouse_select, mouse_orders, hotkeys)
+                .chain()
+                .run_if(in_state(Screen::Game)),
+        )
+        .add_systems(
+            OnExit(Screen::Game),
+            (reset::<Selection>, reset::<Markers>, reset::<Drag>),
         );
 }
 
 fn spawn_box(mut commands: Commands) {
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         SelectionBox,
         Node {
             position_type: PositionType::Absolute,

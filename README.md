@@ -28,9 +28,9 @@ content/
 ## Commands
 
 ```
-cargo run --release -p armada-viewer                                   # skirmish vs AI
+cargo run --release -p armada-viewer                                   # start menu
 cargo run --release -p armada-viewer -- content/scenarios/fleet_clash.ron  # 1000 vs 1000
-cargo run --release -p armada-headless -- run content/scenarios/skirmish.ron --record target/sk.replay.ron
+cargo run --release -p armada-headless -- run content/scenarios/skirmish.ron --ai hard,easy --record target/sk.replay.ron
 cargo run --release -p armada-headless -- verify target/sk.replay.ron
 cargo run --release -p armada-viewer -- --replay target/sk.replay.ron
 cargo test --workspace
@@ -40,6 +40,7 @@ Screenshots come from the viewer's photo mode, same flags give the same picture:
 
 ```
 cargo run --release -p armada-viewer -- --shot out.png --tick 1100 --dist 650 --yaw 165
+cargo run --release -p armada-viewer -- --shot menu.png --tick 0           # start menu
 ```
 
 ## Sim rules
@@ -70,6 +71,9 @@ an enemy point first drains to neutral. Ships cost credits up front and take pop
 
 The AI lives in its own crate and only sends commands, like a player. Headless `run` lets it
 play both sides, and since its commands go into the log, `verify` replays without it.
+
+Three levels, none of them cheat. Harder means faster reactions, a fuller build queue, earlier
+attacks and using the whole population cap. Headless, hard beats easy and normal from either side.
 
 ## Orders
 

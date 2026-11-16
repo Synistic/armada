@@ -1,6 +1,7 @@
 // One station per side and a small escort. Build up, take the five capture
 // points for income, destroy the enemy station to win.
 (
+    name: "Gefecht um die Station",
     seed: 20261117,
     arena_half: 9000.0,
     ticks: 27000,

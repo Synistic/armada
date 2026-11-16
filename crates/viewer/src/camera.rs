@@ -3,6 +3,7 @@ use bevy::{
 };
 
 use crate::{
+    Screen,
     render::{SCALE, to_render},
     sim::Sim,
 };
@@ -17,10 +18,11 @@ pub struct Rig {
 }
 
 pub fn plugin(app: &mut App) {
-    app.add_systems(Startup, spawn).add_systems(Update, control);
+    app.add_systems(OnEnter(Screen::Game), spawn)
+        .add_systems(Update, control.run_if(in_state(Screen::Game)));
 }
 
-fn spawn(mut commands: Commands, sim: Res<Sim>) {
+pub fn spawn(mut commands: Commands, sim: Res<Sim>) {
     // Start over the player's station if there is one.
     let focus = sim
         .player_producer()
@@ -28,6 +30,7 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
             to_render(sim.world.ships.pos[i as usize]) + Vec3::Z * 120.0
         });
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         Camera3d::default(),
         Hdr,
         Bloom::NATURAL,

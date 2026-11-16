@@ -5,7 +5,9 @@ use armada_sim::{
 use bevy::{picking::hover::Hovered, prelude::*, text::FontSize};
 
 use crate::{
+    Screen,
     input::Selection,
+    reset,
     sim::{Mode, PLAYER_TEAM, SPEEDS, Sim},
 };
 
@@ -23,7 +25,7 @@ Strg + 1-9   Gruppe speichern     1-9   Gruppe wählen\n\
 F   Kamera auf Auswahl     WASD / Q E / Mausrad   Kamera\n\
 Z X C V   bauen     Rechtsklick auf Bauknopf   abbrechen\n\
 Rechtsklick mit Station gewählt   Sammelpunkt\n\
-Leertaste   Pause     + / -   Tempo     F5   Replay speichern";
+Leertaste   Pause     + / -   Tempo     F5   Replay speichern     F10   Menü";
 const BUILD_KEYS: [KeyCode; 4] = [KeyCode::KeyZ, KeyCode::KeyX, KeyCode::KeyC, KeyCode::KeyV];
 const BUILD_KEY_LABELS: [&str; 4] = ["Z", "X", "C", "V"];
 const PANEL_BG: Color = Color::srgba(0.05, 0.06, 0.09, 0.85);
@@ -39,6 +41,21 @@ impl Toast {
     pub fn show(&mut self, text: String) {
         self.text = text;
         self.timer = TOAST_SECS;
+    }
+}
+
+/// Bevy's built-in font is an ASCII subset and has no umlauts.
+#[derive(Resource)]
+pub struct UiFont(pub Handle<Font>);
+
+impl FromWorld for UiFont {
+    fn from_world(world: &mut World) -> Self {
+        let bytes = include_bytes!("../assets/fonts/FiraSans-Regular.ttf").to_vec();
+        Self(
+            world
+                .resource_mut::<Assets<Font>>()
+                .add(Font::from_bytes(bytes)),
+        )
     }
 }
 
@@ -68,11 +85,14 @@ struct BuildProgress(u16);
 
 pub fn plugin(app: &mut App) {
     app.init_resource::<Toast>()
-        .add_systems(Startup, spawn)
+        .init_resource::<UiFont>()
+        .add_systems(OnEnter(Screen::Game), spawn)
         .add_systems(
             Update,
-            (status, selection, help, build_input, build_bar, outcome),
-        );
+            (status, selection, help, build_input, build_bar, outcome)
+                .run_if(in_state(Screen::Game)),
+        )
+        .add_systems(OnExit(Screen::Game), reset::<Toast>);
 }
 
 fn text_bundle(font: &Handle<Font>, size: f32, node: Node) -> impl Bundle {
@@ -88,15 +108,13 @@ fn text_bundle(font: &Handle<Font>, size: f32, node: Node) -> impl Bundle {
     )
 }
 
-fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>) {
-    // Bevy's built-in font is an ASCII subset and has no umlauts.
-    let font = fonts.add(Font::from_bytes(
-        include_bytes!("../assets/fonts/FiraSans-Regular.ttf").to_vec(),
-    ));
+fn spawn(mut commands: Commands, font: Res<UiFont>, sim: Res<Sim>) {
+    let font = &font.0;
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         StatusText,
         text_bundle(
-            &font,
+            font,
             15.0,
             Node {
                 position_type: PositionType::Absolute,
@@ -107,9 +125,10 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>)
         ),
     ));
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         SelectionText,
         text_bundle(
-            &font,
+            font,
             14.0,
             Node {
                 position_type: PositionType::Absolute,
@@ -120,6 +139,7 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>)
         ),
     ));
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         HelpText,
         Text::new(HELP),
         TextFont {
@@ -138,6 +158,7 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>)
     ));
 
     commands.spawn((
+        DespawnOnExit(Screen::Game),
         OutcomeText,
         Text::new(""),
         TextFont {
@@ -164,14 +185,17 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>)
         .builds
         .clone();
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            bottom: Val::Px(12.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            column_gap: Val::Px(8.0),
-            ..default()
-        })
+        .spawn((
+            DespawnOnExit(Screen::Game),
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(12.0),
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                column_gap: Val::Px(8.0),
+                ..default()
+            },
+        ))
         .with_children(|bar| {
             for (k, &ship) in builds.iter().enumerate().take(BUILD_KEYS.len()) {
                 bar.spawn((
@@ -192,7 +216,7 @@ fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>, sim: Res<Sim>)
                     BorderColor::all(PANEL_BORDER),
                 ))
                 .with_children(|b| {
-                    b.spawn((BuildLabel(ship), text_bundle(&font, 14.0, Node::default())));
+                    b.spawn((BuildLabel(ship), text_bundle(font, 14.0, Node::default())));
                     b.spawn((
                         Node {
                             height: Val::Px(3.0),
@@ -341,7 +365,7 @@ fn status(
         String::new()
     };
     text.0 = format!(
-        "{:02}:{:02}  {}x{mode}{paused}\nBlau {}   Rot {}   F1 Hilfe{economy}\n{toast_line}",
+        "{:02}:{:02}  {}x{mode}{paused}\nBlau {}   Rot {}   F1 Hilfe   F10 Menü{economy}\n{toast_line}",
         secs / 60,
         secs % 60,
         SPEEDS[sim.speed],

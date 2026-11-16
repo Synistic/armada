@@ -1,5 +1,6 @@
 // 1000 vs 1000. Team 0 starts south, team 1 north, 8 km apart.
 (
+    name: "Flottenschlacht, 1000 gegen 1000",
     seed: 20261116,
     arena_half: 12000.0,
     ticks: 2700,
