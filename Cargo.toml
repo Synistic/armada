@@ -1,0 +1,31 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+armada-sim = { path = "crates/sim" }
+armada-data = { path = "crates/data" }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+bevy = "0.20"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+float_arithmetic = "deny"
+
+# Bevy is unusable at opt-level 0, and our own code should still be debuggable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"

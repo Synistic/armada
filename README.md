@@ -1,0 +1,52 @@
+# Armada
+
+Space-only RTS: fleet battles with hardpoints. No ground combat. This repo is milestone 1:
+a deterministic headless space battle with replays, and a Bevy viewer.
+
+## Layout
+
+```
+crates/
+  sim/       deterministic simulation, depends on serde only
+  data/      RON content -> compiled defs, scenarios, replays
+  headless/  CLI: run battles, record and verify replays, benchmark
+  viewer/    Bevy, read-only view on the sim
+content/
+  base/      ship definitions
+  scenarios/ battle setups
+```
+
+## Commands
+
+```
+cargo run --release -p armada-headless -- run --record target/clash.replay.ron
+cargo run --release -p armada-headless -- verify target/clash.replay.ron
+cargo run --release -p armada-viewer
+cargo run --release -p armada-viewer -- --replay target/clash.replay.ron
+cargo test --workspace
+```
+
+## Sim rules
+
+These are what keeps lockstep multiplayer and replays working. Break one and you get desyncs
+that only show up after 20 minutes on someone else's machine.
+
+1. No floats in `armada-sim`. `clippy::float_arithmetic` is denied at workspace level. All math
+   goes through `Fx` (48.16 fixed point). Floats are allowed in `data` (load time) and `viewer`.
+2. No `HashMap`/`HashSet` iteration, no threads, no clock, no global state inside the tick.
+3. One RNG per world, advanced in fixed order.
+4. All external input is a `Command` in the `CommandLog`. Player, AI, scripts and network all
+   go through it.
+5. Data is struct-of-arrays in `World`. Ids are indices, dead ships stay as tombstones.
+6. `state_hash` covers everything that influences future ticks. New state means a new hash input.
+
+## Tick order
+
+commands -> spatial grid -> retarget (staggered, every 8 ticks) -> movement (velocity pass,
+then integrate) -> weapons -> shield regen -> deaths.
+
+## Damage model
+
+Shield absorbs first. The rest hits a random intact hardpoint at full strength and the hull at
+half. With no hardpoints left the hull takes everything. Destroyed shield generator stops regen,
+destroyed engine halves speed.

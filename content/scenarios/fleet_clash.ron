@@ -1,0 +1,27 @@
+// 1000 vs 1000. Team 0 starts south, team 1 north, 8 km apart.
+(
+    seed: 20261116,
+    arena_half: 12000.0,
+    ticks: 2700,
+    ship_files: ["../base/ships.ron"],
+    fleets: [
+        (
+            team: 0,
+            groups: [
+                (ship: "corvette", count: 600, columns: 40, spacing: 60.0, row_spacing: -60.0, origin: (0.0, -4000.0)),
+                (ship: "frigate", count: 300, columns: 30, spacing: 120.0, row_spacing: -120.0, origin: (0.0, -5100.0)),
+                (ship: "cruiser", count: 80, columns: 20, spacing: 250.0, row_spacing: -250.0, origin: (0.0, -6500.0)),
+                (ship: "dreadnought", count: 20, columns: 10, spacing: 500.0, row_spacing: -500.0, origin: (0.0, -7700.0)),
+            ],
+        ),
+        (
+            team: 1,
+            groups: [
+                (ship: "corvette", count: 650, columns: 40, spacing: 60.0, row_spacing: 60.0, origin: (0.0, 4000.0)),
+                (ship: "frigate", count: 280, columns: 28, spacing: 120.0, row_spacing: 120.0, origin: (0.0, 5100.0)),
+                (ship: "cruiser", count: 55, columns: 11, spacing: 250.0, row_spacing: 250.0, origin: (0.0, 6500.0)),
+                (ship: "dreadnought", count: 15, columns: 5, spacing: 500.0, row_spacing: 500.0, origin: (0.0, 7900.0)),
+            ],
+        ),
+    ],
+)
