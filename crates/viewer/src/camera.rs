@@ -1,8 +1,5 @@
 use bevy::{
-    input::mouse::AccumulatedMouseScroll,
-    post_process::bloom::Bloom,
-    prelude::*,
-    camera::Hdr,
+    camera::Hdr, input::mouse::AccumulatedMouseScroll, post_process::bloom::Bloom, prelude::*,
 };
 
 use crate::{render::SCALE, sim::Sim};

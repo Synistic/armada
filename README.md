@@ -1,7 +1,15 @@
 # Armada
 
-Space-only RTS: fleet battles with hardpoints. No ground combat. This repo is milestone 1:
-a deterministic headless space battle with replays, and a Bevy viewer.
+A love letter to Star Wars: Empire at War's space battles. Own game, own code, no original
+assets. Space-only RTS with fleets, hardpoints, firing arcs and deterministic lockstep sim,
+written in Rust and Bevy. Early and changing fast.
+
+![Clash](docs/screenshots/clash.png)
+
+| | |
+|---|---|
+| ![Overview](docs/screenshots/overview.png) | ![Late battle](docs/screenshots/late.png) |
+| ![Inspecting a ship](docs/screenshots/selection.png) | |
 
 ## Layout
 
@@ -24,6 +32,12 @@ cargo run --release -p armada-headless -- verify target/clash.replay.ron
 cargo run --release -p armada-viewer
 cargo run --release -p armada-viewer -- --replay target/clash.replay.ron
 cargo test --workspace
+```
+
+Screenshots come from the viewer's photo mode, same flags give the same picture:
+
+```
+cargo run --release -p armada-viewer -- --shot out.png --tick 1100 --dist 650 --yaw 165
 ```
 
 ## Sim rules

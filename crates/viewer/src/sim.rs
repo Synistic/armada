@@ -8,7 +8,9 @@ use std::{
 use armada_data::{
     REPLAY_FORMAT, Replay, Sources, build, content_dir, load_replay, read_sources, save_replay,
 };
-use armada_sim::{Command, CommandLog, Event, TICK_HZ, TimedCommand, Vec2, World, state_hash, step};
+use armada_sim::{
+    Command, CommandLog, Event, TICK_HZ, TimedCommand, Vec2, World, state_hash, step,
+};
 use bevy::prelude::*;
 
 pub const PLAYER_TEAM: u8 = 0;
@@ -39,8 +41,8 @@ pub struct Sim {
 pub struct FrameEvents(pub Vec<Event>);
 
 impl Sim {
-    pub fn load() -> Result<Self, Box<dyn Error>> {
-        let args: Vec<String> = std::env::args().skip(1).collect();
+    /// `auto`: the player's fleet fights on its own instead of waiting for orders.
+    pub fn load(args: &[String], auto: bool) -> Result<Self, Box<dyn Error>> {
         let (sources, log, mode) = if args.first().map(String::as_str) == Some("--replay") {
             let path = PathBuf::from(args.get(1).ok_or("--replay needs a path")?);
             let replay = load_replay(&path)?;
@@ -64,7 +66,7 @@ impl Sim {
             sources,
             checkpoints: Vec::new(),
         };
-        if mode == Mode::Live {
+        if mode == Mode::Live && !auto {
             // The player's fleet waits for orders instead of charging.
             let ships = (0..sim.world.ships.len() as u32)
                 .filter(|&i| sim.world.ships.team[i as usize] == PLAYER_TEAM)
@@ -72,6 +74,23 @@ impl Sim {
             sim.issue(Command::Stop { ships });
         }
         Ok(sim)
+    }
+
+    /// Run ticks without rendering, up to `to`.
+    pub fn fast_forward(&mut self, to: u32) {
+        while self.world.tick < to {
+            self.advance();
+        }
+        self.prev_pos.clone_from(&self.world.ships.pos);
+    }
+
+    fn advance(&mut self) {
+        let tick = self.world.tick;
+        step(&mut self.world, self.log.for_tick(tick));
+        if self.world.tick.is_multiple_of(CHECKPOINT_EVERY) {
+            self.checkpoints
+                .push((self.world.tick, state_hash(&self.world)));
+        }
     }
 
     /// Queue a player command for the next tick. Ignored in replays.
@@ -114,12 +133,8 @@ fn tick(mut sim: ResMut<Sim>, mut events: ResMut<FrameEvents>) {
     }
     let sim = &mut *sim;
     sim.prev_pos.clone_from(&sim.world.ships.pos);
-    let tick = sim.world.tick;
-    step(&mut sim.world, sim.log.for_tick(tick));
+    sim.advance();
     events.0.extend_from_slice(&sim.world.events);
-    if sim.world.tick.is_multiple_of(CHECKPOINT_EVERY) {
-        sim.checkpoints.push((sim.world.tick, state_hash(&sim.world)));
-    }
 }
 
 fn time_controls(

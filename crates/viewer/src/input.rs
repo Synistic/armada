@@ -199,7 +199,8 @@ fn mouse_select(
     if !shift(&keys) {
         sel.ships.clear();
     }
-    sel.ships.retain(|&i| w.ships.team[i as usize] == PLAYER_TEAM);
+    sel.ships
+        .retain(|&i| w.ships.team[i as usize] == PLAYER_TEAM);
     sel.ships.extend(picked);
     sel.ships.sort_unstable();
     sel.ships.dedup();

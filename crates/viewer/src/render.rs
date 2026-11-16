@@ -25,7 +25,12 @@ pub fn to_render(v: armada_sim::Vec2) -> Vec3 {
 
 pub fn team_color(team: u8, intensity: f32, alpha: f32) -> Color {
     let (r, g, b) = TEAM_COLORS[usize::from(team) % TEAM_COLORS.len()];
-    Color::LinearRgba(LinearRgba::new(r * intensity, g * intensity, b * intensity, alpha))
+    Color::LinearRgba(LinearRgba::new(
+        r * intensity,
+        g * intensity,
+        b * intensity,
+        alpha,
+    ))
 }
 
 #[derive(Component)]
@@ -188,15 +193,28 @@ fn spawn_explosions(
     for ev in events.0.drain(..) {
         let (pos, size, life, material) = match ev {
             Event::ShipDestroyed(i) => {
-                let r = w.defs.ships[usize::from(w.ships.def[i as usize])].radius.to_f32();
-                (to_render(w.ships.pos[i as usize]), r * SCALE * 2.2, 1.4, &fx.blast)
+                let r = w.defs.ships[usize::from(w.ships.def[i as usize])]
+                    .radius
+                    .to_f32();
+                (
+                    to_render(w.ships.pos[i as usize]),
+                    r * SCALE * 2.2,
+                    1.4,
+                    &fx.blast,
+                )
             }
-            Event::HardpointDestroyed(h) => (to_render(w.hardpoint_pos(h as usize)), 3.0, 0.6, &fx.blast),
+            Event::HardpointDestroyed(h) => {
+                (to_render(w.hardpoint_pos(h as usize)), 3.0, 0.6, &fx.blast)
+            }
             Event::Impact { pos, .. } => (to_render(pos), 2.5, 0.35, &fx.spark),
             _ => continue,
         };
         commands.spawn((
-            Explosion { age: 0.0, life, size },
+            Explosion {
+                age: 0.0,
+                life,
+                size,
+            },
             Mesh3d(fx.sphere.clone()),
             MeshMaterial3d(material.clone()),
             Transform::from_translation(pos + Vec3::Y).with_scale(Vec3::splat(0.01)),
@@ -222,7 +240,11 @@ fn animate_explosions(
             continue;
         }
         // Fast swell, slow collapse.
-        let scale = if t < 0.25 { t / 0.25 } else { 1.0 - (t - 0.25) / 0.75 };
+        let scale = if t < 0.25 {
+            t / 0.25
+        } else {
+            1.0 - (t - 0.25) / 0.75
+        };
         tf.scale = Vec3::splat((ex.size * scale).max(0.01));
     }
 }
@@ -245,14 +267,22 @@ fn draw_beams(sim: Res<Sim>, mut gizmos: Gizmos) {
             // Misses fly past the target.
             to = from + (to - from) * 1.15 + Vec3::new(3.0, 0.0, -3.0);
         }
-        let color = team_color(w.ships.team[owner], if hit { 3.0 } else { 1.2 }, if hit { 0.9 } else { 0.4 });
+        let color = team_color(
+            w.ships.team[owner],
+            if hit { 3.0 } else { 1.2 },
+            if hit { 0.9 } else { 0.4 },
+        );
         gizmos.line(from + Vec3::Y, to + Vec3::Y, color);
     }
 }
 
 fn draw_projectiles(sim: Res<Sim>, fixed: Res<Time<Fixed>>, mut gizmos: Gizmos) {
     let p = &sim.world.projectiles;
-    let alpha = if sim.paused { 1.0 } else { fixed.overstep_fraction() };
+    let alpha = if sim.paused {
+        1.0
+    } else {
+        fixed.overstep_fraction()
+    };
     for i in 0..p.len() {
         let vel = Vec3::new(p.vel[i].x.to_f32(), 0.0, p.vel[i].y.to_f32()) * SCALE;
         let head = to_render(p.pos[i]) - vel * (1.0 - alpha) + Vec3::Y;
@@ -267,9 +297,10 @@ fn order_line(w: &World, i: usize) -> Option<(Vec3, Color)> {
     match w.ships.order[i] {
         Order::MoveTo { to, .. } => Some((to_render(to), Color::srgba(0.8, 0.9, 1.0, 0.25))),
         Order::AttackMove { to, .. } => Some((to_render(to), Color::srgba(1.0, 0.75, 0.3, 0.3))),
-        Order::Attack(t) if w.ships.alive[t as usize] => {
-            Some((to_render(w.ships.pos[t as usize]), Color::srgba(1.0, 0.35, 0.3, 0.45)))
-        }
+        Order::Attack(t) if w.ships.alive[t as usize] => Some((
+            to_render(w.ships.pos[t as usize]),
+            Color::srgba(1.0, 0.35, 0.3, 0.45),
+        )),
         _ => None,
     }
 }
@@ -312,9 +343,21 @@ fn draw_selection(
         };
         let up = Vec3::Y * 1.6;
         gizmos.line(base, base + right * len, Color::srgba(0.2, 0.2, 0.2, 0.8));
-        gizmos.line(base, base + right * len * hull, Color::srgb(0.45, 0.95, 0.5));
-        gizmos.line(base + up, base + up + right * len, Color::srgba(0.15, 0.15, 0.25, 0.8));
-        gizmos.line(base + up, base + up + right * len * shield, Color::srgb(0.45, 0.75, 1.0));
+        gizmos.line(
+            base,
+            base + right * len * hull,
+            Color::srgb(0.45, 0.95, 0.5),
+        );
+        gizmos.line(
+            base + up,
+            base + up + right * len,
+            Color::srgba(0.15, 0.15, 0.25, 0.8),
+        );
+        gizmos.line(
+            base + up,
+            base + up + right * len * shield,
+            Color::srgb(0.45, 0.75, 1.0),
+        );
 
         if order_lines && let Some((to, color)) = order_line(w, i) {
             gizmos.line(pos, to, color);
@@ -333,7 +376,11 @@ fn draw_selection(
                     Color::srgb(0.9, 0.95, 1.0)
                 };
                 let size = match hp_def.kind {
-                    HardpointKind::Weapon(ref wd) if matches!(wd.delivery, Delivery::Projectile { .. }) => 0.9,
+                    HardpointKind::Weapon(ref wd)
+                        if matches!(wd.delivery, Delivery::Projectile { .. }) =>
+                    {
+                        0.9
+                    }
                     HardpointKind::Weapon(_) => 0.6,
                     _ => 1.1,
                 };
@@ -349,7 +396,11 @@ fn draw_selection(
         if w.ships.team[i] != crate::sim::PLAYER_TEAM {
             let t = w.ships.target[i];
             if t != NONE && w.ships.alive[t as usize] {
-                gizmos.line(pos, to_render(w.ships.pos[t as usize]), Color::srgba(1.0, 0.4, 0.3, 0.3));
+                gizmos.line(
+                    pos,
+                    to_render(w.ships.pos[t as usize]),
+                    Color::srgba(1.0, 0.4, 0.3, 0.3),
+                );
             }
         }
     }
@@ -369,6 +420,10 @@ fn draw_markers(time: Res<Time>, mut markers: ResMut<Markers>, mut gizmos: Gizmo
             MarkerKind::AttackMove => Color::srgba(1.0, 0.75, 0.3, 1.0 - t),
             MarkerKind::Attack => Color::srgba(1.0, 0.35, 0.3, 1.0 - t),
         };
-        gizmos.circle(Isometry3d::new(m.pos + Vec3::Y, flat), 14.0 * (1.0 - t) + 3.0, color);
+        gizmos.circle(
+            Isometry3d::new(m.pos + Vec3::Y, flat),
+            14.0 * (1.0 - t) + 3.0,
+            color,
+        );
     }
 }

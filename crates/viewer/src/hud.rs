@@ -48,10 +48,11 @@ pub fn plugin(app: &mut App) {
         .add_systems(Update, (status, selection, help));
 }
 
-fn text_bundle(size: f32, node: Node) -> impl Bundle {
+fn text_bundle(font: &Handle<Font>, size: f32, node: Node) -> impl Bundle {
     (
         Text::new(""),
         TextFont {
+            font: font.clone().into(),
             font_size: FontSize::Px(size),
             ..default()
         },
@@ -60,10 +61,15 @@ fn text_bundle(size: f32, node: Node) -> impl Bundle {
     )
 }
 
-fn spawn(mut commands: Commands) {
+fn spawn(mut commands: Commands, mut fonts: ResMut<Assets<Font>>) {
+    // Bevy's built-in font is an ASCII subset and has no umlauts.
+    let font = fonts.add(Font::from_bytes(
+        include_bytes!("../assets/fonts/FiraSans-Regular.ttf").to_vec(),
+    ));
     commands.spawn((
         StatusText,
         text_bundle(
+            &font,
             15.0,
             Node {
                 position_type: PositionType::Absolute,
@@ -76,6 +82,7 @@ fn spawn(mut commands: Commands) {
     commands.spawn((
         SelectionText,
         text_bundle(
+            &font,
             14.0,
             Node {
                 position_type: PositionType::Absolute,
@@ -89,6 +96,7 @@ fn spawn(mut commands: Commands) {
         HelpText,
         Text::new(HELP),
         TextFont {
+            font: font.into(),
             font_size: FontSize::Px(13.0),
             ..default()
         },
@@ -120,7 +128,11 @@ fn status(
         Mode::Replay => "  Wiedergabe",
     };
     let paused = if sim.paused { "  Pausiert" } else { "" };
-    let toast_line = if toast.timer > 0.0 { toast.text.as_str() } else { "" };
+    let toast_line = if toast.timer > 0.0 {
+        toast.text.as_str()
+    } else {
+        ""
+    };
     text.0 = format!(
         "{:02}:{:02}  {}x{mode}{paused}\nBlau {}   Rot {}   F1 Hilfe\n{toast_line}",
         secs / 60,
@@ -162,7 +174,11 @@ fn selection(sim: Res<Sim>, sel: Res<Selection>, mut q: Query<&mut Text, With<Se
         [id] => {
             let i = *id as usize;
             let def = &w.defs.ships[usize::from(w.ships.def[i])];
-            let side = if w.ships.team[i] == PLAYER_TEAM { "" } else { "  (Gegner)" };
+            let side = if w.ships.team[i] == PLAYER_TEAM {
+                ""
+            } else {
+                "  (Gegner)"
+            };
             let mut out = format!(
                 "{}{side}\nRumpf {} / {}   Schild {} / {}\nBefehl: {}\n",
                 def.display_name,
