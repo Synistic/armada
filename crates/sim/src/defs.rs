@@ -19,6 +19,8 @@ impl Defs {
 #[derive(Clone, Debug)]
 pub struct ShipDef {
     pub name: String,
+    /// Shown to the player. The sim never reads it.
+    pub display_name: String,
     pub hull: i32,
     pub shield: i32,
     /// Restored once per second while the shield generator is intact.
@@ -57,12 +59,24 @@ pub enum HardpointKind {
     Engine,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Delivery {
+    /// Hits or misses on the tick it fires.
+    Beam,
+    /// Homing projectile. Speed in meters per tick, lifetime in ticks.
+    Projectile { speed: Fx, ttl_ticks: u16 },
+}
+
 #[derive(Clone, Debug)]
 pub struct WeaponDef {
     pub damage: i32,
     pub range: Fx,
     pub cooldown_ticks: u16,
     pub accuracy_pct: u8,
+    /// Share of the damage that ignores shields and goes straight to
+    /// hardpoints and hull.
+    pub shield_bypass_pct: u8,
+    pub delivery: Delivery,
     /// Ship frame unit vector the weapon points along.
     pub facing: Vec2,
     /// Cosine of half the firing arc. -1 means all round.

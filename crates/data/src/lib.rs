@@ -10,7 +10,7 @@ use std::{
 };
 
 use armada_sim::{
-    CommandLog, Defs, Fx, HardpointDef, HardpointKind, MAX_TEAMS, ShipDef, TICK_HZ, Vec2,
+    CommandLog, Defs, Delivery, Fx, HardpointDef, HardpointKind, MAX_TEAMS, ShipDef, TICK_HZ, Vec2,
     WeaponDef, World,
 };
 use serde::{Deserialize, Serialize};
@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 const HZ: f64 = TICK_HZ as f64;
 /// By default ships hold this fraction of their longest weapon range to their target.
 const ENGAGE_FRACTION: f64 = 0.85;
-pub const REPLAY_FORMAT: u32 = 2;
+pub const REPLAY_FORMAT: u32 = 3;
+const PROJECTILE_TTL_FACTOR: f64 = 1.6;
 /// Candidate bearings when searching for the best broadside.
 const BEARING_STEPS: u32 = 72;
 
@@ -30,6 +31,7 @@ struct ShipFile {
 #[derive(Deserialize)]
 struct ShipSpec {
     name: String,
+    display_name: String,
     hull: i32,
     shield: i32,
     shield_regen: i32,
@@ -67,6 +69,12 @@ enum HardpointKindSpec {
         /// Full firing arc in degrees.
         #[serde(default = "full_arc")]
         arc: f64,
+        /// Meters per second. Set: homing projectile. Unset: beam.
+        #[serde(default)]
+        projectile_speed: Option<f64>,
+        /// Percent of the damage that ignores shields.
+        #[serde(default)]
+        shield_bypass: u8,
     },
     ShieldGenerator,
     Engine,
@@ -151,12 +159,17 @@ impl fmt::Display for LoadError {
 
 impl std::error::Error for LoadError {}
 
+/// Content files may write `Some(x)` as plain `x` for optional fields.
+fn content_ron() -> ron::Options {
+    ron::Options::default().with_default_extension(ron::extensions::Extensions::IMPLICIT_SOME)
+}
+
 fn read(path: &Path) -> Result<String, LoadError> {
     fs::read_to_string(path).map_err(|e| LoadError::Io(path.to_path_buf(), e))
 }
 
 fn parse_scenario(text: &str) -> Result<ScenarioSpec, LoadError> {
-    ron::from_str(text).map_err(|e| LoadError::Parse("scenario".into(), Box::new(e)))
+    content_ron().from_str(text).map_err(|e| LoadError::Parse("scenario".into(), Box::new(e)))
 }
 
 pub fn read_sources(scenario_path: &Path) -> Result<Sources, LoadError> {
@@ -257,6 +270,8 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
                     accuracy,
                     facing,
                     arc,
+                    projectile_speed,
+                    shield_bypass,
                 } => {
                     max_range = Some(max_range.map_or(range, |m| m.max(range)));
                     let facing = dir_deg(facing);
@@ -271,11 +286,26 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
                         arc_cos,
                         dps: f64::from(damage) / f64::from(cooldown_ticks),
                     });
+                    let delivery = match projectile_speed {
+                        None => Delivery::Beam,
+                        Some(speed) => {
+                            let per_tick = speed / HZ;
+                            // Enough life to chase a target across the full
+                            // range with some slack for turning.
+                            let ttl = (range * PROJECTILE_TTL_FACTOR / per_tick).ceil();
+                            Delivery::Projectile {
+                                speed: Fx::from_f64(per_tick),
+                                ttl_ticks: ttl.clamp(1.0, f64::from(u16::MAX)) as u16,
+                            }
+                        }
+                    };
                     HardpointKind::Weapon(WeaponDef {
                         damage,
                         range: Fx::from_f64(range),
                         cooldown_ticks,
                         accuracy_pct: accuracy.min(100),
+                        shield_bypass_pct: shield_bypass.min(100),
+                        delivery,
                         facing: fx_vec(facing),
                         arc_cos: Fx::from_f64(arc_cos),
                     })
@@ -295,6 +325,7 @@ fn compile_ship(spec: ShipSpec) -> ShipDef {
 
     ShipDef {
         name: spec.name,
+        display_name: spec.display_name,
         hull: spec.hull,
         shield: spec.shield,
         shield_regen: spec.shield_regen,
@@ -316,7 +347,7 @@ fn compile_defs(ship_files: &[String]) -> Result<Defs, LoadError> {
     let mut defs = Defs::default();
     for (i, text) in ship_files.iter().enumerate() {
         let file: ShipFile =
-            ron::from_str(text).map_err(|e| LoadError::Parse(format!("ship file {i}"), Box::new(e)))?;
+            content_ron().from_str(text).map_err(|e| LoadError::Parse(format!("ship file {i}"), Box::new(e)))?;
         for spec in file.ships {
             let ship = compile_ship(spec);
             match defs.ship_index(&ship.name) {

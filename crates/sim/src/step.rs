@@ -3,8 +3,9 @@ use std::sync::Arc;
 use crate::{
     MAX_TEAMS, TICK_HZ,
     command::{Command, TimedCommand},
-    defs::{Defs, HardpointKind, WeaponDef},
+    defs::{Defs, Delivery, HardpointKind, WeaponDef},
     fixed::Fx,
+    formation::line_formation,
     grid::Grid,
     vec::Vec2,
     world::{Event, FLAG_ENGINE_DOWN, FLAG_SHIELD_DOWN, NONE, Order, Ships, World},
@@ -28,28 +29,65 @@ pub fn step(w: &mut World, commands: &[TimedCommand]) {
     retarget(w);
     movement(w, &centroids);
     weapons(w);
+    projectiles(w);
     shields(w);
     deaths(w);
     w.tick += 1;
 }
 
+/// Alive ships of `team` from `ids`, sorted and deduplicated so the result
+/// does not depend on how the client built the list.
+fn own_ships(s: &Ships, team: u8, ids: &[u32]) -> Vec<u32> {
+    let mut out: Vec<u32> = ids
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let i = id as usize;
+            i < s.len() && s.alive[i] && s.team[i] == team
+        })
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 fn apply_command(w: &mut World, tc: &TimedCommand) {
-    let s = &mut w.ships;
-    let (ships, order) = match &tc.command {
-        Command::Move { ships, to } => (ships, Order::MoveTo(to.clamp_box(w.arena_half))),
+    match &tc.command {
+        Command::Move { ships, to } | Command::AttackMove { ships, to } => {
+            let ids = own_ships(&w.ships, tc.team, ships);
+            let Some(cap) = ids.iter().map(|&i| w.max_speed(i as usize)).min() else {
+                return;
+            };
+            let attack = matches!(tc.command, Command::AttackMove { .. });
+            let half = w.arena_half;
+            for (id, slot) in line_formation(&w.ships, &w.defs, &ids, to.clamp_box(half)) {
+                let to = slot.clamp_box(half);
+                w.ships.order[id as usize] = if attack {
+                    Order::AttackMove { to, cap }
+                } else {
+                    Order::MoveTo { to, cap }
+                };
+            }
+        }
         Command::Attack { ships, target } => {
+            let s = &w.ships;
             let t = *target as usize;
             if t >= s.len() || !s.alive[t] || s.team[t] == tc.team {
                 return;
             }
-            (ships, Order::Attack(*target))
+            for id in own_ships(s, tc.team, ships) {
+                w.ships.order[id as usize] = Order::Attack(*target);
+            }
         }
-        Command::Stop { ships } => (ships, Order::Engage),
-    };
-    for &id in ships {
-        let i = id as usize;
-        if i < s.len() && s.alive[i] && s.team[i] == tc.team {
-            s.order[i] = order;
+        Command::Stop { ships } => {
+            for id in own_ships(&w.ships, tc.team, ships) {
+                w.ships.order[id as usize] = Order::Hold;
+            }
+        }
+        Command::Engage { ships } => {
+            for id in own_ships(&w.ships, tc.team, ships) {
+                w.ships.order[id as usize] = Order::Engage;
+            }
         }
     }
 }
@@ -93,7 +131,7 @@ fn retarget(w: &mut World) {
                 w.ships.target[i] = t;
                 continue;
             }
-            w.ships.order[i] = Order::Engage;
+            w.ships.order[i] = Order::Hold;
         }
         let current = w.ships.target[i];
         let lost = current == NONE || !w.ships.alive[current as usize];
@@ -126,6 +164,17 @@ fn nearest_enemy(w: &World, i: usize) -> u32 {
     best
 }
 
+/// What a ship wants to do with its hull this tick.
+enum Goal {
+    /// Travel to a point at no more than this speed.
+    Point(Vec2, Fx),
+    /// Close to engage range of the target, then present the best arc.
+    Fight(Vec2),
+    /// Do not move, only turn the best arc toward the target.
+    Face(Vec2),
+    Stay,
+}
+
 fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
     let defs = &*w.defs;
     let grid = &w.grid;
@@ -140,41 +189,50 @@ fn movement(w: &mut World, centroids: &[Option<Vec2>; MAX_TEAMS]) {
         }
         let def = &defs.ships[usize::from(s.def[i])];
         let pos = s.pos[i];
+        let heading = s.heading[i];
         let target = s.target[i];
-        let has_target = target != NONE && s.alive[target as usize];
-
-        let goal = match s.order[i] {
-            Order::MoveTo(p) => Some((p, Fx::ZERO)),
-            Order::Attack(_) | Order::Engage if has_target => {
-                Some((s.pos[target as usize], def.engage_range))
-            }
-            Order::Engage => centroids[usize::from(s.team[i])].map(|c| (c, Fx::ZERO)),
-            Order::Attack(_) => None,
-        };
-
+        let target_pos = (target != NONE && s.alive[target as usize]).then(|| s.pos[target as usize]);
         let max_speed = if s.flags[i] & FLAG_ENGINE_DOWN != 0 {
             def.max_speed / 2
         } else {
             def.max_speed
         };
 
-        let heading = s.heading[i];
-        // Where to point and how fast to go once pointed there. In range of the
-        // target the ship stops and turns to bring its best arc to bear.
+        let goal = match (s.order[i], target_pos) {
+            (Order::MoveTo { to, cap }, _) => Goal::Point(to, cap),
+            (Order::AttackMove { .. } | Order::Attack(_) | Order::Engage, Some(t)) => Goal::Fight(t),
+            (Order::AttackMove { to, cap }, None) => Goal::Point(to, cap),
+            (Order::Engage, None) => match centroids[usize::from(s.team[i])] {
+                Some(c) => Goal::Point(c, max_speed),
+                None => Goal::Stay,
+            },
+            (Order::Hold, Some(t)) => Goal::Face(t),
+            (Order::Hold | Order::Attack(_), None) => Goal::Stay,
+        };
+
+        let face = |t: Vec2| (t - pos).normalize_or_zero().heading_for_bearing(def.preferred_bearing);
         let (dir, want_speed) = match goal {
-            Some((g, standoff)) => {
-                let to = g - pos;
-                let gap = to.len() - standoff;
-                if gap > Fx::ZERO {
-                    (to.normalize_or_zero(), max_speed.min(gap / ARRIVE_TICKS))
-                } else if standoff > Fx::ZERO {
-                    let bearing = def.preferred_bearing;
-                    (to.normalize_or_zero().heading_for_bearing(bearing), Fx::ZERO)
-                } else {
+            Goal::Point(p, cap) => {
+                let to = p - pos;
+                let dist = to.len();
+                if dist <= def.radius {
                     (heading, Fx::ZERO)
+                } else {
+                    let speed = max_speed.min(cap).min(dist / ARRIVE_TICKS);
+                    (to.normalize_or_zero(), speed)
                 }
             }
-            None => (heading, Fx::ZERO),
+            Goal::Fight(t) => {
+                let to = t - pos;
+                let gap = to.len() - def.engage_range;
+                if gap > Fx::ZERO {
+                    (to.normalize_or_zero(), max_speed.min(gap / ARRIVE_TICKS))
+                } else {
+                    (face(t), Fx::ZERO)
+                }
+            }
+            Goal::Face(t) => (face(t), Fx::ZERO),
+            Goal::Stay => (heading, Fx::ZERO),
         };
 
         let heading = heading.turn_towards(dir, def.turn_cos, def.turn_sin);
@@ -240,19 +298,17 @@ fn weapons(w: &mut World) {
 
         // Ship target first, then the cached target of opportunity, then a
         // fresh search. The search is staggered like ship retargeting.
-        let target = {
+        let (target, mount_pos) = {
             let s = &w.ships;
-            let heading = s.heading[owner];
-            let offset = sdef.hardpoints[usize::from(w.hardpoints.slot[h])].offset;
             let mount = Mount {
-                pos: s.pos[owner] + offset.from_local(heading),
-                heading,
+                pos: w.hardpoint_pos(h),
+                heading: s.heading[owner],
                 team: s.team[owner],
                 weapon,
             };
             let ship_target = s.target[owner];
             let cached = w.hardpoints.target[h];
-            if mount.can_hit(s, &defs, ship_target) {
+            let target = if mount.can_hit(s, &defs, ship_target) {
                 ship_target
             } else if mount.can_hit(s, &defs, cached) {
                 cached
@@ -262,7 +318,8 @@ fn weapons(w: &mut World) {
                 mount.find_target(s, &defs, &w.grid)
             } else {
                 NONE
-            }
+            };
+            (target, mount.pos)
         };
         if target != w.ships.target[owner] {
             w.hardpoints.target[h] = target;
@@ -274,14 +331,72 @@ fn weapons(w: &mut World) {
 
         w.hardpoints.cooldown[h] = weapon.cooldown_ticks;
         let hit = w.rng.below(100) < u32::from(weapon.accuracy_pct);
-        w.events.push(Event::Shot {
-            hardpoint: h as u32,
-            target,
-            hit,
-        });
-        if hit {
-            apply_damage(w, &defs, t, weapon.damage);
+        match weapon.delivery {
+            Delivery::Beam => {
+                w.events.push(Event::Shot {
+                    hardpoint: h as u32,
+                    target,
+                    hit,
+                });
+                if hit {
+                    apply_damage(w, &defs, t, weapon.damage, weapon.shield_bypass_pct);
+                }
+            }
+            Delivery::Projectile { speed, ttl_ticks } => {
+                let dir = (w.ships.pos[t] - mount_pos).normalize_or_zero();
+                let p = &mut w.projectiles;
+                p.pos.push(mount_pos);
+                p.vel.push(dir.scale(speed));
+                // A miss keeps flying straight and expires.
+                p.target.push(if hit { target } else { NONE });
+                p.damage.push(weapon.damage);
+                p.bypass.push(weapon.shield_bypass_pct);
+                p.ttl.push(ttl_ticks.max(1));
+                p.team.push(w.ships.team[owner]);
+                w.events.push(Event::Launch {
+                    hardpoint: h as u32,
+                });
+            }
         }
+    }
+}
+
+/// Homing: steer straight at the target each tick, impact when within one
+/// tick of travel plus the target's radius.
+fn projectiles(w: &mut World) {
+    let defs = Arc::clone(&w.defs);
+    let mut i = 0;
+    while i < w.projectiles.len() {
+        let t = w.projectiles.target[i];
+        if t != NONE {
+            let tu = t as usize;
+            if w.ships.alive[tu] && w.ships.hull[tu] > 0 {
+                let speed = w.projectiles.vel[i].len();
+                let to = w.ships.pos[tu] - w.projectiles.pos[i];
+                let reach = speed + defs.ships[usize::from(w.ships.def[tu])].radius;
+                if to.len_sq() <= reach * reach {
+                    let (damage, bypass) = (w.projectiles.damage[i], w.projectiles.bypass[i]);
+                    w.events.push(Event::Impact {
+                        pos: w.ships.pos[tu],
+                        target: t,
+                    });
+                    apply_damage(w, &defs, tu, damage, bypass);
+                    w.projectiles.swap_remove(i);
+                    continue;
+                }
+                w.projectiles.vel[i] = to.normalize_or_zero().scale(speed);
+            } else {
+                w.projectiles.target[i] = NONE;
+            }
+        }
+        let next = w.projectiles.pos[i] + w.projectiles.vel[i];
+        w.projectiles.pos[i] = next;
+        w.projectiles.ttl[i] -= 1;
+        if w.projectiles.ttl[i] == 0 {
+            w.projectiles.swap_remove(i);
+            continue;
+        }
+        i += 1;
     }
 }
 
@@ -328,11 +443,13 @@ impl Mount<'_> {
     }
 }
 
-/// Shield first. What gets through hits a random intact hardpoint at full
-/// strength and the hull at half. No hardpoints left: the hull takes it all.
-fn apply_damage(w: &mut World, defs: &Defs, t: usize, damage: i32) {
+/// The bypass share skips the shield. The shield absorbs what it can of the
+/// rest. Whatever gets through hits a random intact hardpoint at full strength
+/// and the hull at half; with no hardpoints left the hull takes it all.
+fn apply_damage(w: &mut World, defs: &Defs, t: usize, damage: i32, bypass_pct: u8) {
     let s = &mut w.ships;
-    let absorbed = damage.min(s.shield[t]);
+    let bypass = damage * i32::from(bypass_pct) / 100;
+    let absorbed = (damage - bypass).min(s.shield[t]);
     s.shield[t] -= absorbed;
     let rest = damage - absorbed;
     if rest <= 0 {

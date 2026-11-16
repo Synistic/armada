@@ -18,11 +18,15 @@ const GRID_CELL_M: i64 = 1000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Order {
-    /// Default stance: pick the nearest enemy, close to engage range, otherwise
+    /// Autonomous: pick the nearest enemy, close to engage range, otherwise
     /// advance on the enemy centroid.
     Engage,
-    /// Go there and hold. Still fires at whatever is in range.
-    MoveTo(Vec2),
+    /// Stay put, turn the best arc toward the current target.
+    Hold,
+    /// Go to a formation slot at no more than `cap` meters per tick.
+    MoveTo { to: Vec2, cap: Fx },
+    /// Like `MoveTo`, but engage anything picked up on the way.
+    AttackMove { to: Vec2, cap: Fx },
     Attack(u32),
 }
 
@@ -71,9 +75,45 @@ pub struct Hardpoints {
     pub target: Vec<u32>,
 }
 
+/// Projectiles in flight. Removed with swap_remove while iterating forward,
+/// which is order dependent but the same on every peer.
+#[derive(Clone, Debug, Default)]
+pub struct Projectiles {
+    pub pos: Vec<Vec2>,
+    pub vel: Vec<Vec2>,
+    /// `NONE` for a miss: it flies on until it expires.
+    pub target: Vec<u32>,
+    pub damage: Vec<i32>,
+    pub bypass: Vec<u8>,
+    pub ttl: Vec<u16>,
+    pub team: Vec<u8>,
+}
+
+impl Projectiles {
+    pub fn len(&self) -> usize {
+        self.pos.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pos.is_empty()
+    }
+
+    pub fn swap_remove(&mut self, i: usize) {
+        self.pos.swap_remove(i);
+        self.vel.swap_remove(i);
+        self.target.swap_remove(i);
+        self.damage.swap_remove(i);
+        self.bypass.swap_remove(i);
+        self.ttl.swap_remove(i);
+        self.team.swap_remove(i);
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum Event {
     Shot { hardpoint: u32, target: u32, hit: bool },
+    Launch { hardpoint: u32 },
+    Impact { pos: Vec2, target: u32 },
     HardpointDestroyed(u32),
     ShipDestroyed(u32),
 }
@@ -85,6 +125,7 @@ pub struct World {
     pub arena_half: Fx,
     pub ships: Ships,
     pub hardpoints: Hardpoints,
+    pub projectiles: Projectiles,
     pub rng: Rng,
     pub grid: Grid,
     /// Output of the last tick for presentation. The sim never reads it.
@@ -99,6 +140,7 @@ impl World {
             arena_half,
             ships: Ships::default(),
             hardpoints: Hardpoints::default(),
+            projectiles: Projectiles::default(),
             rng: Rng::new(seed),
             grid: Grid::new(arena_half, Fx::from_int(GRID_CELL_M)),
             events: Vec::new(),
@@ -150,5 +192,23 @@ impl World {
             .zip(&self.ships.alive)
             .filter(|(t, a)| **t == team && **a)
             .count()
+    }
+
+    /// World position of a hardpoint, following its ship's heading.
+    pub fn hardpoint_pos(&self, h: usize) -> Vec2 {
+        let owner = self.hardpoints.owner[h] as usize;
+        let def = &self.defs.ships[usize::from(self.ships.def[owner])];
+        let offset = def.hardpoints[usize::from(self.hardpoints.slot[h])].offset;
+        self.ships.pos[owner] + offset.from_local(self.ships.heading[owner])
+    }
+
+    /// Max speed right now, halved with a destroyed engine.
+    pub fn max_speed(&self, i: usize) -> Fx {
+        let base = self.defs.ships[usize::from(self.ships.def[i])].max_speed;
+        if self.ships.flags[i] & FLAG_ENGINE_DOWN != 0 {
+            base / 2
+        } else {
+            base
+        }
     }
 }

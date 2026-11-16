@@ -44,13 +44,15 @@ pub fn state_hash(w: &World) -> u64 {
         h.u64(u64::from(s.target[i]));
         match s.order[i] {
             Order::Engage => h.u64(0),
-            Order::MoveTo(p) => {
-                h.u64(1);
-                h.i64(p.x.0);
-                h.i64(p.y.0);
+            Order::Hold => h.u64(1),
+            Order::MoveTo { to, cap } | Order::AttackMove { to, cap } => {
+                h.u64(if matches!(s.order[i], Order::MoveTo { .. }) { 2 } else { 3 });
+                h.i64(to.x.0);
+                h.i64(to.y.0);
+                h.i64(cap.0);
             }
             Order::Attack(t) => {
-                h.u64(2);
+                h.u64(4);
                 h.u64(u64::from(t));
             }
         }
@@ -61,6 +63,17 @@ pub fn state_hash(w: &World) -> u64 {
         h.i64(i64::from(hp.health[i]));
         h.u64(u64::from(hp.cooldown[i]));
         h.u64(u64::from(hp.target[i]));
+    }
+
+    let p = &w.projectiles;
+    h.u64(p.len() as u64);
+    for i in 0..p.len() {
+        h.i64(p.pos[i].x.0);
+        h.i64(p.pos[i].y.0);
+        h.i64(p.vel[i].x.0);
+        h.i64(p.vel[i].y.0);
+        h.u64(u64::from(p.target[i]));
+        h.u64(u64::from(p.ttl[i]));
     }
     h.0
 }

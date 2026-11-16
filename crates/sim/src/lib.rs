@@ -5,6 +5,7 @@
 pub mod command;
 pub mod defs;
 pub mod fixed;
+pub mod formation;
 pub mod grid;
 pub mod hash;
 pub mod rng;
@@ -13,7 +14,7 @@ pub mod vec;
 pub mod world;
 
 pub use command::{Command, CommandLog, TimedCommand};
-pub use defs::{Defs, HardpointDef, HardpointKind, ShipDef, WeaponDef};
+pub use defs::{Defs, Delivery, HardpointDef, HardpointKind, ShipDef, WeaponDef};
 pub use fixed::Fx;
 pub use hash::state_hash;
 pub use step::step;

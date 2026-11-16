@@ -42,8 +42,19 @@ that only show up after 20 minutes on someone else's machine.
 
 ## Tick order
 
-commands -> spatial grid -> retarget (staggered, every 8 ticks) -> movement (velocity pass,
-then integrate) -> weapons -> shield regen -> deaths.
+commands -> spatial grid -> centroids -> retarget (staggered, every 8 ticks) -> movement
+(velocity pass, then integrate) -> weapons -> projectiles -> shield regen -> deaths.
+
+## Orders
+
+- `Move`: line formation towards the point, small ships in front, capped at the slowest ship.
+  Ignores enemies until it arrives, then holds.
+- `AttackMove`: same formation, but fights anything it meets on the way.
+- `Attack`: one target. Falls back to hold when it dies.
+- `Stop` (hold): stays put, turns its best arc to whatever is in range.
+- `Engage`: free AI, closes on the nearest enemy group.
+
+In the viewer you play team 0. F1 shows all controls.
 
 ## Movement and arcs
 
@@ -56,8 +67,13 @@ Every weapon has a facing and an arc. It fires at the ship's target if that is i
 otherwise at its own target of opportunity. Trig at load time uses a polynomial instead of libm,
 because libm results can differ between platforms.
 
+## Weapons
+
+`Beam` hits instantly on fire. `Projectile` (missiles, torpedoes) flies and homes on its target,
+dies after its TTL, and can carry `shield_bypass`: that share of damage skips the shield.
+
 ## Damage model
 
-Shield absorbs first. The rest hits a random intact hardpoint at full strength and the hull at
+Shield absorbs first (minus bypass). The rest hits a random intact hardpoint at full strength and the hull at
 half. With no hardpoints left the hull takes everything. Destroyed shield generator stops regen,
 destroyed engine halves speed.

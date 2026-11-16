@@ -6,9 +6,16 @@ use crate::vec::Vec2;
 /// input, AI, scripts, network. That makes AI and multiplayer the same problem.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
+    /// Move in formation at the speed of the slowest ship. Ships fire at
+    /// whatever comes into arc but do not break formation.
     Move { ships: Vec<u32>, to: Vec2 },
+    /// Like `Move`, but ships break off to fight anything they meet.
+    AttackMove { ships: Vec<u32>, to: Vec2 },
     Attack { ships: Vec<u32>, target: u32 },
+    /// Hold position, keep firing, turn guns toward the nearest enemy.
     Stop { ships: Vec<u32> },
+    /// Back to the autonomous stance: hunt the nearest enemy.
+    Engage { ships: Vec<u32> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

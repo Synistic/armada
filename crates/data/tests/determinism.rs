@@ -1,5 +1,5 @@
 use armada_data::{Replay, Sources, build, content_dir, load_replay, read_sources, save_replay};
-use armada_sim::{Command, CommandLog, TimedCommand, Vec2, Fx, run, state_hash};
+use armada_sim::{Command, CommandLog, Fx, NONE, TimedCommand, Vec2, run, state_hash};
 
 const TICKS: u32 = 600;
 
@@ -30,7 +30,7 @@ fn scripted_commands() -> CommandLog {
     log.push(TimedCommand {
         tick: 240,
         team: 0,
-        command: Command::Stop {
+        command: Command::Engage {
             ships: (0..600).collect(),
         },
     });
@@ -95,24 +95,26 @@ fn replay_roundtrip() {
 }
 
 #[test]
-fn cruisers_hold_broadside() {
+fn holding_ships_present_their_best_arc() {
     let (mut w, _) = build(&sources()).unwrap();
-    let cruiser = w.defs.ship_index("cruiser").unwrap();
     run(&mut w, &CommandLog::default(), 2400, 15);
 
+    // cos(15 deg): the target may sit up to 15 degrees off the preferred bearing.
+    let tolerance = Fx::from_f64(0.966);
     let s = &w.ships;
-    let (mut broadside, mut holding) = (0, 0);
+    let (mut on_bearing, mut holding) = (0, 0);
     for i in 0..s.len() {
         let t = s.target[i];
-        if s.def[i] != cruiser || !s.alive[i] || t == armada_sim::NONE || s.speed[i] != Fx::ZERO {
+        if !s.alive[i] || t == NONE || s.speed[i] != Fx::ZERO {
             continue;
         }
-        let local = (s.pos[t as usize] - s.pos[i]).to_local(s.heading[i]);
+        let def = &w.defs.ships[usize::from(s.def[i])];
+        let local = (s.pos[t as usize] - s.pos[i]).to_local(s.heading[i]).normalize_or_zero();
         holding += 1;
-        if local.x.0.abs() > local.y.0.abs() {
-            broadside += 1;
+        if local.dot(def.preferred_bearing) >= tolerance {
+            on_bearing += 1;
         }
     }
-    assert!(holding > 0, "no cruiser holding position at tick 2400");
-    assert!(broadside * 4 >= holding * 3, "{broadside} of {holding} holding cruisers broadside");
+    assert!(holding > 20, "only {holding} ships holding at tick 2400");
+    assert!(on_bearing * 4 >= holding * 3, "{on_bearing} of {holding} holding ships on bearing");
 }
