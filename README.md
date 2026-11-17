@@ -4,12 +4,13 @@ A love letter to Star Wars: Empire at War's space battles. Own game, own code, n
 assets. Space-only RTS with fleets, hardpoints, firing arcs and deterministic lockstep sim,
 written in Rust and Bevy. Early and changing fast.
 
-![Clash](docs/screenshots/clash.png)
+![Capital ships](docs/screenshots/ships.png)
 
 | | |
 |---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Late battle](docs/screenshots/late.png) |
-| ![Inspecting a ship](docs/screenshots/selection.png) | ![Skirmish](docs/screenshots/skirmish.png) |
+| ![Clash](docs/screenshots/clash.png) | ![Late battle](docs/screenshots/late.png) |
+| ![Inspecting a ship](docs/screenshots/selection.png) | ![Station](docs/screenshots/station.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Skirmish](docs/screenshots/skirmish.png) |
 
 ## Layout
 
@@ -74,6 +75,18 @@ play both sides, and since its commands go into the log, `verify` replays withou
 
 Three levels, none of them cheat. Harder means faster reactions, a fuller build queue, earlier
 attacks and using the whole population cap. Headless, hard beats easy and normal from either side.
+
+## Ships and models
+
+Seven types in `content/base/ships.ron`: corvette, frigate, cruiser, carrier, destroyer,
+dreadnought and the station. The destroyer is a wedge with a split bow around a spinal lance,
+nearly all of its guns point forward. The carrier's hangars send strike craft, for now as slow
+homing salvos that mostly ignore shields.
+
+Models are built in code (`viewer/src/models.rs`): a hull is a few cross sections lofted into a
+skin, plus boxes and towers. Turrets, launchers, hangar pads and the shield dome are placed from
+the hardpoint offsets of the ship definition, so moving a hardpoint in the RON moves it on the
+model.
 
 ## Orders
 

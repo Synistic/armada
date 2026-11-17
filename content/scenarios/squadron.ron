@@ -1,0 +1,33 @@
+// One squadron per side with every ship class, 6 km apart. No economy:
+// the side that loses all ships loses.
+(
+    name: "Geschwadergefecht, alle Klassen",
+    seed: 20261118,
+    arena_half: 8000.0,
+    ticks: 9000,
+    ship_files: ["../base/ships.ron"],
+    fleets: [
+        (
+            team: 0,
+            groups: [
+                (ship: "corvette", count: 8, columns: 8, spacing: 120.0, row_spacing: 0.0, origin: (0.0, -2200.0)),
+                (ship: "frigate", count: 4, columns: 4, spacing: 300.0, row_spacing: 0.0, origin: (0.0, -2450.0)),
+                (ship: "cruiser", count: 2, columns: 2, spacing: 1500.0, row_spacing: 0.0, origin: (0.0, -2900.0)),
+                (ship: "destroyer", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (-350.0, -3000.0)),
+                (ship: "carrier", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (350.0, -3000.0)),
+                (ship: "dreadnought", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (0.0, -3600.0)),
+            ],
+        ),
+        (
+            team: 1,
+            groups: [
+                (ship: "corvette", count: 8, columns: 8, spacing: 120.0, row_spacing: 0.0, origin: (0.0, 2200.0), facing: 180.0),
+                (ship: "frigate", count: 4, columns: 4, spacing: 300.0, row_spacing: 0.0, origin: (0.0, 2450.0), facing: 180.0),
+                (ship: "cruiser", count: 2, columns: 2, spacing: 1500.0, row_spacing: 0.0, origin: (0.0, 2900.0), facing: 180.0),
+                (ship: "destroyer", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (350.0, 3000.0), facing: 180.0),
+                (ship: "carrier", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (-350.0, 3000.0), facing: 180.0),
+                (ship: "dreadnought", count: 1, columns: 1, spacing: 0.0, row_spacing: 0.0, origin: (0.0, 3600.0), facing: 180.0),
+            ],
+        ),
+    ],
+)

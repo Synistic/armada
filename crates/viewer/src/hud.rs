@@ -23,11 +23,18 @@ H   halten     G   frei kämpfen\n\
 Strg + A   alle eigenen Schiffe\n\
 Strg + 1-9   Gruppe speichern     1-9   Gruppe wählen\n\
 F   Kamera auf Auswahl     WASD / Q E / Mausrad   Kamera\n\
-Z X C V   bauen     Rechtsklick auf Bauknopf   abbrechen\n\
+Z X C V B N   bauen     Rechtsklick auf Bauknopf   abbrechen\n\
 Rechtsklick mit Station gewählt   Sammelpunkt\n\
 Leertaste   Pause     + / -   Tempo     F5   Replay speichern     F10   Menü";
-const BUILD_KEYS: [KeyCode; 4] = [KeyCode::KeyZ, KeyCode::KeyX, KeyCode::KeyC, KeyCode::KeyV];
-const BUILD_KEY_LABELS: [&str; 4] = ["Z", "X", "C", "V"];
+const BUILD_KEYS: [KeyCode; 6] = [
+    KeyCode::KeyZ,
+    KeyCode::KeyX,
+    KeyCode::KeyC,
+    KeyCode::KeyV,
+    KeyCode::KeyB,
+    KeyCode::KeyN,
+];
+const BUILD_KEY_LABELS: [&str; 6] = ["Z", "X", "C", "V", "B", "N"];
 const PANEL_BG: Color = Color::srgba(0.05, 0.06, 0.09, 0.85);
 const PANEL_BORDER: Color = Color::srgba(0.6, 0.7, 0.9, 0.25);
 

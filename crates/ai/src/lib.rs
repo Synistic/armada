@@ -4,7 +4,7 @@
 
 use armada_sim::{Command, Fx, NONE, Order, Vec2, World, economy::pop_used};
 
-const BUILD_ORDER: [&str; 10] = [
+const BUILD_ORDER: [&str; 12] = [
     "corvette",
     "corvette",
     "frigate",
@@ -13,7 +13,9 @@ const BUILD_ORDER: [&str; 10] = [
     "cruiser",
     "corvette",
     "frigate",
+    "carrier",
     "cruiser",
+    "destroyer",
     "dreadnought",
 ];
 /// Ships closer than this to the station count as waiting at home.

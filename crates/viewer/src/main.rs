@@ -10,6 +10,7 @@ mod camera;
 mod hud;
 mod input;
 mod menu;
+mod models;
 mod render;
 mod shot;
 mod sim;

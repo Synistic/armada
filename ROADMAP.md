@@ -12,7 +12,8 @@ Space battles only. Each milestone ends in something you can play, not just code
 - Beams, homing missiles and torpedoes with shield bypass
 - Bevy viewer with selection, HUD, explosions, photo mode
 - Skirmish: stations, credits, population cap, build queue, capture points, AI opponent,
-  victory and defeat
+  victory and defeat, start menu, three AI levels
+- Ship models for every class with turrets on the hardpoints, destroyer and carrier classes
 
 ## 1. Skirmish loop
 
@@ -39,7 +40,7 @@ What made the original's space battles fun.
 
 ## 3. Look and feel
 
-- Real ship models with visible hardpoints and damage states
+- Damage states on the models: destroyed turrets, hull scars
 - Better weapon effects, shield hits, wrecks
 - Sound and music
 - Minimap, unit cards, health bars over ships

@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use crate::{
     Screen,
     input::{MarkerKind, Markers, Selection},
+    models,
     sim::{FrameEvents, Sim},
 };
 
@@ -44,11 +45,15 @@ struct Explosion {
     size: f32,
 }
 
-/// One mesh per class, one material per team: everything batches.
+/// Hull meshes per class and team with the colors baked in, so one material
+/// covers every hull and everything batches. Engines and lights are a second
+/// mesh per class with one glowing material per team.
 #[derive(Resource)]
 struct ShipAssets {
-    meshes: Vec<Handle<Mesh>>,
-    materials: Vec<Handle<StandardMaterial>>,
+    hulls: Vec<Vec<Handle<Mesh>>>,
+    glows: Vec<Handle<Mesh>>,
+    hull_material: Handle<StandardMaterial>,
+    glow_materials: Vec<Handle<StandardMaterial>>,
     /// Ships with a view entity. Ids only grow, so this is a high-water mark.
     spawned: usize,
 }
@@ -86,45 +91,67 @@ fn setup(
 ) {
     let w = &sim.world;
 
-    let class_meshes: Vec<Handle<Mesh>> = w
-        .defs
-        .ships
-        .iter()
-        .map(|d| {
-            let r = d.radius.to_f32() * SCALE;
-            if d.is_mobile() {
-                meshes.add(Cuboid::new(r * 0.9, r * 0.35, r * 2.2))
-            } else {
-                meshes.add(Cylinder::new(r * 0.8, r * 0.25))
+    let mut hulls = Vec::new();
+    let mut glows = Vec::new();
+    for def in &w.defs.ships {
+        let mut per_team = Vec::new();
+        for &(r, g, b) in &TEAM_COLORS {
+            let accent = Color::srgb(r, g, b).to_linear();
+            let accent = Vec3::new(accent.red, accent.green, accent.blue);
+            let (hull, glow) = models::build(def, accent, SCALE);
+            per_team.push(meshes.add(hull));
+            if per_team.len() == 1 {
+                glows.push(meshes.add(glow));
             }
-        })
-        .collect();
-    let team_materials: Vec<Handle<StandardMaterial>> = TEAM_COLORS
+        }
+        hulls.push(per_team);
+    }
+    let glow_materials = TEAM_COLORS
         .iter()
         .map(|&(r, g, b)| {
             materials.add(StandardMaterial {
                 base_color: Color::srgb(r, g, b),
-                emissive: LinearRgba::rgb(r * 0.3, g * 0.3, b * 0.3),
-                perceptual_roughness: 0.55,
+                emissive: Color::srgb(r, g, b).to_linear() * 5.0,
                 ..default()
             })
         })
         .collect();
-
     commands.insert_resource(ShipAssets {
-        meshes: class_meshes,
-        materials: team_materials,
+        hulls,
+        glows,
+        hull_material: materials.add(StandardMaterial {
+            perceptual_roughness: 0.6,
+            metallic: 0.2,
+            ..default()
+        }),
+        glow_materials,
         spawned: 0,
     });
 
+    // Key light from above, a dim blue one from below so undersides and
+    // shadow sides keep their shape.
     commands.spawn((
         DespawnOnExit(Screen::Game),
         DirectionalLight {
-            illuminance: 12_000.0,
+            illuminance: 9_000.0,
             ..default()
         },
         Transform::from_xyz(300.0, 800.0, 200.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
+    commands.spawn((
+        DespawnOnExit(Screen::Game),
+        DirectionalLight {
+            illuminance: 1_500.0,
+            color: Color::srgb(0.6, 0.75, 1.0),
+            ..default()
+        },
+        Transform::from_xyz(-400.0, -300.0, -500.0).looking_at(Vec3::ZERO, Vec3::Y),
+    ));
+    commands.insert_resource(GlobalAmbientLight {
+        color: Color::srgb(0.75, 0.82, 1.0),
+        brightness: 110.0,
+        ..default()
+    });
 
     let sphere = meshes.add(Sphere::new(1.0).mesh().ico(2).expect("valid ico sphere"));
     let star = materials.add(StandardMaterial {
@@ -179,13 +206,18 @@ fn spawn_views(mut commands: Commands, sim: Res<Sim>, assets: Option<ResMut<Ship
     };
     let s = &sim.world.ships;
     for i in assets.spawned..s.len() {
-        let team = usize::from(s.team[i]) % assets.materials.len();
+        let team = usize::from(s.team[i]) % TEAM_COLORS.len();
+        let def = usize::from(s.def[i]);
         commands.spawn((
             DespawnOnExit(Screen::Game),
             ShipView(i),
-            Mesh3d(assets.meshes[usize::from(s.def[i])].clone()),
-            MeshMaterial3d(assets.materials[team].clone()),
+            Mesh3d(assets.hulls[def][team].clone()),
+            MeshMaterial3d(assets.hull_material.clone()),
             Transform::from_translation(to_render(s.pos[i])),
+            children![(
+                Mesh3d(assets.glows[def].clone()),
+                MeshMaterial3d(assets.glow_materials[team].clone()),
+            )],
         ));
     }
     assets.spawned = s.len();
@@ -309,7 +341,12 @@ fn draw_beams(sim: Res<Sim>, mut gizmos: Gizmos) {
             if hit { 3.0 } else { 1.2 },
             if hit { 0.9 } else { 0.4 },
         );
-        gizmos.line(from + Vec3::Y, to + Vec3::Y, color);
+        // Leave from deck height, not from inside the hull.
+        let deck = |ship: usize| {
+            let r = w.defs.ships[usize::from(w.ships.def[ship])].radius.to_f32();
+            Vec3::Y * (r * SCALE * 0.22).max(0.5)
+        };
+        gizmos.line(from + deck(owner), to + deck(target as usize) * 0.5, color);
     }
 }
 
